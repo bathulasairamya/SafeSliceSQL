@@ -66,15 +66,27 @@ class DependencyGraph:
         )
 
     @property
+    def self_referential_tables(self) -> list[str]:
+        """Return table names that contain a self-referencing foreign key."""
+        return sorted([u for u, v in self._graph.edges() if u == v])
+
+    @property
     def has_cycles(self) -> bool:
-        """Return True if the FK graph contains cycles."""
-        return not nx.is_directed_acyclic_graph(self._graph)
+        """
+        Return True if the FK graph contains cross-table cycles.
+        Self-referential relationships are tracked separately and do not block DAG sorting.
+        """
+        clean_graph = self._graph.copy()
+        clean_graph.remove_edges_from(nx.selfloop_edges(clean_graph))
+        return not nx.is_directed_acyclic_graph(clean_graph)
 
     def cycles(self) -> list[list[str]]:
-        """Return all simple directed cycles found in the graph."""
-        if nx.is_directed_acyclic_graph(self._graph):
+        """Return all simple directed cross-table cycles found in the graph."""
+        clean_graph = self._graph.copy()
+        clean_graph.remove_edges_from(nx.selfloop_edges(clean_graph))
+        if nx.is_directed_acyclic_graph(clean_graph):
             return []
-        return list(nx.simple_cycles(self._graph))
+        return list(nx.simple_cycles(clean_graph))
 
     def get_parents(self, table_name: str) -> list[str]:
         """
@@ -109,18 +121,21 @@ class DependencyGraph:
         Return tables in topological (parent-first) order.
 
         Used for determining safe insertion order during materialization.
+        Self-referential relationships are excluded from table-level ordering.
 
         Raises
         ------
         ValueError
-            If the graph contains cycles.
+            If the graph contains cross-table cycles.
         """
-        if self.has_cycles:
-            cycles_str = ", ".join(" -> ".join(c) for c in self.cycles())
+        clean_graph = self._graph.copy()
+        clean_graph.remove_edges_from(nx.selfloop_edges(clean_graph))
+        if not nx.is_directed_acyclic_graph(clean_graph):
+            cycles_str = ", ".join(" -> ".join(c) for c in nx.simple_cycles(clean_graph))
             raise ValueError(
                 f"Cannot compute topological order: foreign-key graph contains cycles: {cycles_str}"
             )
-        return list(nx.topological_sort(self._graph))
+        return list(nx.topological_sort(clean_graph))
 
 
 def build_dependency_graph(schema: SchemaMetadata) -> DependencyGraph:
@@ -140,6 +155,149 @@ def build_dependency_graph(schema: SchemaMetadata) -> DependencyGraph:
     return DependencyGraph(schema)
 
 
+def _quote_ident(name: str) -> str:
+    """Safely quote a SQL identifier using backticks."""
+    return f"`{name.replace('`', '``')}`"
+
+
+def _resolve_fks_batch(
+    engine: Any,
+    table_name: str,
+    pk_columns: list[str],
+    pk_values: list[Any],
+    fk_columns: list[str],
+) -> dict[Any, dict[str, Any]]:
+    """
+    Batch retrieve foreign-key column values for a set of primary keys.
+
+    Solves the N+1 database query storm by retrieving all foreign key
+    columns for multiple primary keys in a single query.
+
+    Parameters
+    ----------
+    engine : Any
+        Live SQLAlchemy engine/connection, in-memory dictionary, or custom callable.
+    table_name : str
+        Target table name.
+    pk_columns : list[str]
+        Primary key column names.
+    pk_values : list[Any]
+        List of primary key values.
+    fk_columns : list[str]
+        Foreign key column names to fetch.
+
+    Returns
+    -------
+    dict[Any, dict[str, Any]]
+        Mapping of pk_value -> {fk_column: fk_value}
+    """
+    if not pk_values or not fk_columns or engine is None:
+        return {pk: {fk: None for fk in fk_columns} for pk in pk_values}
+
+    results: dict[Any, dict[str, Any]] = {}
+
+    # 1. Custom callable
+    if isinstance(engine, Callable):
+        for pk in pk_values:
+            row_fks: dict[str, Any] = {}
+            for fk in fk_columns:
+                row_fks[fk] = engine(table_name, pk, fk)
+            results[pk] = row_fks
+        return results
+
+    # 2. In-memory dictionary store
+    if isinstance(engine, dict):
+        table_data = engine.get(table_name)
+        if isinstance(table_data, dict):
+            for pk in pk_values:
+                row = table_data.get(pk)
+                if isinstance(row, dict):
+                    results[pk] = {fk: row.get(fk) for fk in fk_columns}
+                else:
+                    results[pk] = {fk: None for fk in fk_columns}
+            return results
+        elif isinstance(table_data, list):
+            # Build index in O(N) once to avoid O(M*N) linear scanning
+            pk_col = pk_columns[0] if pk_columns else "id"
+            indexed: dict[Any, dict[str, Any]] = {}
+            for row in table_data:
+                if isinstance(row, dict):
+                    key = row.get(pk_col)
+                    if key is not None:
+                        indexed[key] = row
+            for pk in pk_values:
+                row = indexed.get(pk)
+                if row:
+                    results[pk] = {fk: row.get(fk) for fk in fk_columns}
+                else:
+                    results[pk] = {fk: None for fk in fk_columns}
+            return results
+        return {pk: {fk: None for fk in fk_columns} for pk in pk_values}
+
+    # 3. SQLAlchemy Engine or Connection
+    if hasattr(engine, "connect"):
+        primary_key_col = pk_columns[0] if pk_columns else "id"
+        quoted_table = _quote_ident(table_name)
+        quoted_pk = _quote_ident(primary_key_col)
+        quoted_fks = ", ".join(_quote_ident(fk) for fk in fk_columns)
+
+        # Chunk large lists of PKs (500 per query) to avoid parameter limits
+        chunk_size = 500
+        try:
+            with engine.connect() as conn:
+                for i in range(0, len(pk_values), chunk_size):
+                    batch = pk_values[i : i + chunk_size]
+                    param_names = [f"pk_{j}" for j in range(len(batch))]
+                    in_clause = ", ".join(f":{p}" for p in param_names)
+                    stmt = sa.text(
+                        f"SELECT {quoted_pk}, {quoted_fks} FROM {quoted_table} WHERE {quoted_pk} IN ({in_clause})"
+                    )
+                    params = dict(zip(param_names, batch))
+                    exec_res = conn.execute(stmt, params)
+                    for row in exec_res.mappings():
+                        r_pk = row[primary_key_col]
+                        results[r_pk] = {fk: row[fk] for fk in fk_columns}
+        except Exception as exc:
+            logger.error(
+                "Database error while batch querying FKs on table '%s': %s",
+                table_name, exc,
+            )
+            from safeslicesql.types import DatabaseResolutionError
+            raise DatabaseResolutionError(
+                f"Failed to query foreign keys on table '{table_name}': {exc}"
+            ) from exc
+
+        # Fill in missing PKs with None
+        for pk in pk_values:
+            if pk not in results:
+                results[pk] = {fk: None for fk in fk_columns}
+
+        return results
+
+    return {pk: {fk: None for fk in fk_columns} for pk in pk_values}
+
+
+def _resolve_fk_value(
+    engine: Any,
+    table_name: str,
+    pk_column: str,
+    pk_value: Any,
+    fk_column: str,
+) -> Any:
+    """
+    Retrieve the foreign-key column value for a given primary key.
+    Provides single-row resolution compatibility via _resolve_fks_batch.
+    """
+    batch_res = _resolve_fks_batch(
+        engine=engine,
+        table_name=table_name,
+        pk_columns=[pk_column],
+        pk_values=[pk_value],
+        fk_columns=[fk_column],
+    )
+    return batch_res.get(pk_value, {}).get(fk_column)
+
+
 def compute_closure(
     graph: DependencyGraph,
     selected: dict[str, set[Any]],
@@ -152,6 +310,9 @@ def compute_closure(
     For each selected child row, find all referenced parent rows
     that are not yet in the selection. Add them recursively until
     no further dependencies are needed.
+
+    Uses high-performance wave-based batch resolution to prevent
+    N+1 database queries.
 
     Supports the v1 nullable foreign-key policy:
     NULL = no dependency. If a foreign-key column is NULL, no parent
@@ -186,48 +347,59 @@ def compute_closure(
         table_name: set() for table_name in graph.schema.tables
     }
 
-    # Queue of (table_name, pk_val) rows whose outgoing FKs must be inspected
-    queue: collections.deque[tuple[str, Any]] = collections.deque()
-    inspected_rows: set[tuple[str, Any]] = set()
+    # Track inspected rows: table -> set of PKs whose outgoing FKs have been resolved
+    inspected_rows: dict[str, set[Any]] = {
+        table_name: set() for table_name in graph.schema.tables
+    }
 
-    for table_name, pks in current_selection.items():
-        for pk in pks:
-            queue.append((table_name, pk))
+    while True:
+        # Collect all rows across tables that need FK inspection
+        uninspected_by_table: dict[str, list[Any]] = {}
+        for table_name, pks in current_selection.items():
+            to_inspect = list(pks - inspected_rows[table_name])
+            if to_inspect:
+                uninspected_by_table[table_name] = to_inspect
 
-    while queue:
-        child_table, child_pk = queue.popleft()
-        row_id = (child_table, child_pk)
-        if row_id in inspected_rows:
-            continue
-        inspected_rows.add(row_id)
+        if not uninspected_by_table:
+            break
 
-        child_meta = graph.schema.tables.get(child_table)
-        if child_meta is None or not child_meta.foreign_keys:
-            continue
-
-        for fk in child_meta.foreign_keys:
-            parent_table = fk.referenced_table
-            child_col = fk.column
-            parent_pk_col = fk.referenced_column
-
-            # Resolve the foreign key value for this child row
-            fk_value = _resolve_fk_value(
-                engine=engine,
-                table_name=child_table,
-                pk_column=child_meta.primary_key or "id",
-                pk_value=child_pk,
-                fk_column=child_col,
-            )
-
-            # v1 Nullable Foreign Key Policy: NULL = no dependency
-            if fk_value is None:
+        # Process each table's uninspected batch
+        for child_table, pks_to_inspect in uninspected_by_table.items():
+            child_meta = graph.schema.tables.get(child_table)
+            if child_meta is None or not child_meta.foreign_keys:
+                inspected_rows[child_table].update(pks_to_inspect)
                 continue
 
-            current_parent_pks = current_selection.setdefault(parent_table, set())
-            if fk_value not in current_parent_pks:
-                current_parent_pks.add(fk_value)
-                closure_additions.setdefault(parent_table, set()).add(fk_value)
-                queue.append((parent_table, fk_value))
+            pk_cols = child_meta.effective_primary_keys or ["id"]
+            fk_cols = [fk.column for fk in child_meta.foreign_keys]
+
+            # Batch resolve all FKs for these PKs in a single query/operation
+            batch_results = _resolve_fks_batch(
+                engine=engine,
+                table_name=child_table,
+                pk_columns=pk_cols,
+                pk_values=pks_to_inspect,
+                fk_columns=fk_cols,
+            )
+
+            # Map resolved parent keys into parent tables
+            for fk in child_meta.foreign_keys:
+                parent_table = fk.referenced_table
+                child_col = fk.column
+                current_parent_pks = current_selection.setdefault(parent_table, set())
+
+                for child_pk in pks_to_inspect:
+                    fk_value = batch_results.get(child_pk, {}).get(child_col)
+
+                    # v1 Nullable Foreign Key Policy: NULL = no dependency
+                    if fk_value is None:
+                        continue
+
+                    if fk_value not in current_parent_pks:
+                        current_parent_pks.add(fk_value)
+                        closure_additions.setdefault(parent_table, set()).add(fk_value)
+
+            inspected_rows[child_table].update(pks_to_inspect)
 
     total_rows = sum(len(pks) for pks in current_selection.values())
     total_additions = sum(len(pks) for pks in closure_additions.values())
@@ -252,57 +424,3 @@ def compute_closure(
         is_feasible=is_feasible,
         infeasibility_reason=infeasibility_reason,
     )
-
-
-def _resolve_fk_value(
-    engine: Any,
-    table_name: str,
-    pk_column: str,
-    pk_value: Any,
-    fk_column: str,
-) -> Any:
-    """
-    Retrieve the foreign-key column value for a given primary key.
-
-    Supports:
-    1. Live SQLAlchemy Engine / Connection
-    2. In-memory dictionary store: {table: {pk_val: {col: val}}} or {table: [{col: val}]}
-    3. Custom callable: engine(table_name, pk_value, fk_column) -> Any
-    """
-    if engine is None:
-        return None
-
-    # Callable resolver
-    if isinstance(engine, Callable):
-        return engine(table_name, pk_value, fk_column)
-
-    # In-memory dictionary store
-    if isinstance(engine, dict):
-        table_data = engine.get(table_name)
-        if isinstance(table_data, dict):
-            row = table_data.get(pk_value)
-            if isinstance(row, dict):
-                return row.get(fk_column)
-        elif isinstance(table_data, list):
-            for row in table_data:
-                if isinstance(row, dict) and row.get(pk_column) == pk_value:
-                    return row.get(fk_column)
-        return None
-
-    # SQLAlchemy Engine or Connection
-    if hasattr(engine, "connect"):
-        try:
-            with engine.connect() as conn:
-                stmt = sa.text(
-                    f"SELECT `{fk_column}` FROM `{table_name}` WHERE `{pk_column}` = :pk"
-                )
-                result = conn.execute(stmt, {"pk": pk_value})
-                return result.scalar()
-        except Exception as exc:
-            logger.warning(
-                "Failed to query FK '%s' on '%s' for PK %s: %s",
-                fk_column, table_name, pk_value, exc,
-            )
-            return None
-
-    return None

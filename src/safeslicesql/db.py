@@ -138,11 +138,16 @@ def get_table_names(engine: sa.Engine) -> list[str]:
     return tables
 
 
+def _quote_ident(name: str) -> str:
+    """Safely quote a SQL identifier using backticks."""
+    return f"`{name.replace('`', '``')}`"
+
+
 def get_row_count(engine: sa.Engine, table_name: str) -> int:
-    """Return the approximate row count for a table."""
+    """Return the exact row count for a table."""
     with engine.connect() as conn:
         result = conn.execute(
-            text(f"SELECT COUNT(*) FROM `{table_name}`")
+            text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}")
         )
         count = result.scalar() or 0
     return count

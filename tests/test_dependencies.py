@@ -295,3 +295,60 @@ class TestDependencyClosure:
         assert closure.total_closure_additions == 1
         assert closure.closure_additions["departments"] == {"d001"}
         assert closure.closure_additions["employees"] == set()
+
+    def test_batch_fk_resolution_with_list_data(self, sample_company_schema):
+        """In-memory list data is indexed and queried in O(1) batch lookup."""
+        from safeslicesql.dependency_graph import _resolve_fks_batch
+
+        mock_list_data = {
+            "dept_emp": [
+                {"id": 1, "emp_no": 1001, "dept_no": "d001"},
+                {"id": 2, "emp_no": 1002, "dept_no": "d002"},
+            ]
+        }
+        res = _resolve_fks_batch(
+            engine=mock_list_data,
+            table_name="dept_emp",
+            pk_columns=["id"],
+            pk_values=[1, 2],
+            fk_columns=["emp_no", "dept_no"],
+        )
+        assert res[1] == {"emp_no": 1001, "dept_no": "d001"}
+        assert res[2] == {"emp_no": 1002, "dept_no": "d002"}
+
+    def test_self_referential_table_does_not_break_topological_sort(self):
+        """Self-referential foreign keys (e.g. manager_id) do not crash topological sort."""
+        schema = SchemaMetadata(database_name="corp")
+        schema.tables["employees"] = TableMetadata(
+            name="employees",
+            primary_key="emp_no",
+            columns=[
+                ColumnMetadata("emp_no", "INTEGER", False, is_primary_key=True),
+                ColumnMetadata("manager_id", "INTEGER", True),
+            ],
+            foreign_keys=[
+                ForeignKeyMetadata("fk_emp_mgr", "manager_id", "employees", "emp_no")
+            ],
+        )
+
+        graph = build_dependency_graph(schema)
+        assert graph.has_cycles is False  # No cross-table cycles
+        assert "employees" in graph.self_referential_tables
+        assert graph.topological_order() == ["employees"]
+
+    def test_database_resolution_error_propagation(self):
+        """SQL error during batch resolution raises DatabaseResolutionError."""
+        import sqlalchemy as sa
+        from safeslicesql.types import DatabaseResolutionError
+        from safeslicesql.dependency_graph import _resolve_fks_batch
+
+        engine = sa.create_engine("sqlite:///:memory:")
+        with pytest.raises(DatabaseResolutionError):
+            # Query non-existent table to trigger DB error
+            _resolve_fks_batch(
+                engine=engine,
+                table_name="non_existent_table",
+                pk_columns=["id"],
+                pk_values=[1, 2],
+                fk_columns=["fk_col"],
+            )

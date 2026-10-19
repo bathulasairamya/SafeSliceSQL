@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class DatabaseResolutionError(RuntimeError):
+    """Raised when foreign key or dependency resolution fails due to a query/database error."""
+    pass
+
+
 # ────────────────────────────────────────────────────────────
 # Schema metadata types
 # ────────────────────────────────────────────────────────────
@@ -45,6 +50,7 @@ class TableMetadata:
     name: str
     columns: list[ColumnMetadata] = field(default_factory=list)
     primary_key: str | None = None          # Single-column PK column name
+    primary_keys: list[str] = field(default_factory=list)  # All PK column names (single or composite)
     row_count: int = 0
     foreign_keys: list[ForeignKeyMetadata] = field(default_factory=list)
 
@@ -52,6 +58,20 @@ class TableMetadata:
     def column_names(self) -> list[str]:
         """Return a list of column names."""
         return [c.name for c in self.columns]
+
+    @property
+    def is_composite_pk(self) -> bool:
+        """Return True if the table has a composite primary key."""
+        return len(self.effective_primary_keys) > 1
+
+    @property
+    def effective_primary_keys(self) -> list[str]:
+        """Return primary key columns list."""
+        if self.primary_keys:
+            return self.primary_keys
+        if self.primary_key:
+            return [self.primary_key]
+        return []
 
     def get_column(self, name: str) -> ColumnMetadata | None:
         """Retrieve column metadata by name."""
