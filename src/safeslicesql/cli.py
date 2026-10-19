@@ -24,7 +24,10 @@ from typing import Optional
 import typer
 
 from safeslicesql.config import load_config
+from safeslicesql.db import create_engine, test_connection
+from safeslicesql.dependency_graph import build_dependency_graph
 from safeslicesql.logging_config import setup_logging
+from safeslicesql.schema_analyzer import inspect_schema
 
 logger = logging.getLogger("safeslicesql.cli")
 
@@ -56,9 +59,73 @@ def inspect(
     """Inspect source database schema and foreign-key dependencies."""
     _init(log_level)
     logger.info("Inspecting database: %s", database)
-    typer.echo(f"[inspect] Database: {database}")
-    typer.echo("[inspect] Not yet implemented — Phase 2")
-    raise typer.Exit(code=1)
+
+    try:
+        config = load_config()
+    except Exception as exc:
+        typer.echo(f"[error] Failed to load configuration: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    config.source_db.database = database
+    engine = create_engine(config.source_db)
+
+    if not test_connection(engine):
+        typer.echo(
+            f"[error] Could not connect to database '{database}' on "
+            f"{config.source_db.host}:{config.source_db.port}. "
+            "Please check MySQL service and .env credentials.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        schema = inspect_schema(engine)
+        graph = build_dependency_graph(schema)
+    except Exception as exc:
+        typer.echo(f"[error] Schema inspection failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    console.print(f"\n[bold green]Database Inspection Report:[/bold green] [bold cyan]{database}[/bold cyan]")
+    console.print(f"Total Tables: [bold]{len(schema.tables)}[/bold] | Total Rows (approx): [bold]{schema.total_row_count:,}[/bold]\n")
+
+    table = Table(title="Tables & Foreign Key Dependencies", show_header=True, header_style="bold magenta")
+    table.add_column("Table Name", style="cyan", no_wrap=True)
+    table.add_column("Primary Key", style="green")
+    table.add_column("Rows", justify="right")
+    table.add_column("Outgoing Foreign Keys (Child -> Parent)", style="yellow")
+
+    for tbl_name, tbl in schema.tables.items():
+        fks_str = ", ".join(
+            f"{fk.column} -> {fk.referenced_table}.{fk.referenced_column}"
+            for fk in tbl.foreign_keys
+        ) or "[dim]None[/dim]"
+        pk_str = tbl.primary_key or "[red]None (unsupported)[/red]"
+        table.add_row(tbl_name, pk_str, f"{tbl.row_count:,}", fks_str)
+
+    console.print(table)
+
+    # Topological order / Cycles
+    if graph.has_cycles:
+        console.print("\n[bold red]Dependency Graph Status: CYCLES DETECTED (Unsupported in v1)[/bold red]")
+        for cycle in graph.cycles():
+            console.print(f"  [red]Cycle:[/red] {' -> '.join(cycle)}")
+    else:
+        order = graph.topological_order()
+        console.print(f"\n[bold green]Safe Insertion Order (Parents -> Children):[/bold green]")
+        console.print(f"  {' -> '.join(order)}")
+
+    # Unsupported features
+    if schema.unsupported_features:
+        console.print(f"\n[bold yellow]Unsupported Schema Features Detected ({len(schema.unsupported_features)}):[/bold yellow]")
+        for feat in schema.unsupported_features:
+            console.print(f"  [yellow]- {feat}[/yellow]")
+    else:
+        console.print("\n[bold green]No unsupported schema features detected.[/bold green]")
+    console.print("")
 
 
 @app.command()
