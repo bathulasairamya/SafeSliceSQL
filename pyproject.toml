@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safeslicesql"
+version = "0.1.0"
+description = "Workload-aware database subsetting with referential integrity preservation"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "pymysql>=1.1",
+    "networkx>=3.0",
+    "typer>=0.9",
+    "rich>=13.0",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+safeslice = "safeslicesql.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+markers = [
+    "db: tests requiring a running MySQL database with valid credentials",
+]
