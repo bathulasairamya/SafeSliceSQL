@@ -158,12 +158,18 @@ def get_row_count(engine: sa.Engine, table_name: str) -> int:
 
 def database_exists(engine: sa.Engine, db_name: str) -> bool:
     """Check whether a database exists on the connected server."""
-    with engine.connect() as conn:
-        result = conn.execute(
-            text(
-                "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA "
-                "WHERE SCHEMA_NAME = :db"
-            ),
-            {"db": db_name},
-        )
-        return result.fetchone() is not None
+    if engine.dialect.name == "sqlite":
+        return True
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA "
+                    "WHERE SCHEMA_NAME = :db"
+                ),
+                {"db": db_name},
+            )
+            return result.fetchone() is not None
+    except Exception as exc:
+        logger.debug("database_exists check failed on %s: %s", db_name, exc)
+        return False

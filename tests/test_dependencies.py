@@ -352,3 +352,42 @@ class TestDependencyClosure:
                 pk_values=[1, 2],
                 fk_columns=["fk_col"],
             )
+
+    def test_closure_resolves_fks_for_composite_pk_table_on_live_engine(self):
+        """Transitive closure resolves outgoing FKs on composite PK child tables via live DB engine."""
+        import sqlalchemy as sa
+        from sqlalchemy import text
+        from safeslicesql.schema_analyzer import inspect_schema
+
+        engine = sa.create_engine("sqlite:///:memory:")
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE departments (dept_no VARCHAR(4) PRIMARY KEY, dept_name VARCHAR(40));"))
+            conn.execute(text("CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, name VARCHAR(40));"))
+            conn.execute(text("""
+                CREATE TABLE dept_emp (
+                    emp_no INTEGER NOT NULL,
+                    dept_no VARCHAR(4) NOT NULL,
+                    PRIMARY KEY (emp_no, dept_no),
+                    FOREIGN KEY (emp_no) REFERENCES employees(emp_no),
+                    FOREIGN KEY (dept_no) REFERENCES departments(dept_no)
+                );
+            """))
+            conn.execute(text("INSERT INTO departments VALUES ('d001', 'Engineering'), ('d002', 'Finance');"))
+            conn.execute(text("INSERT INTO employees VALUES (101, 'Ada'), (102, 'Grace');"))
+            conn.execute(text("INSERT INTO dept_emp VALUES (101, 'd001'), (102, 'd002');"))
+
+        schema = inspect_schema(engine)
+        graph = build_dependency_graph(schema)
+
+        # Select only child composite PK (101, 'd001')
+        selected = {"dept_emp": {(101, "d001")}}
+        closure = compute_closure(graph, selected, engine=engine, budget=10)
+
+        assert closure.is_feasible is True
+        assert closure.total_rows == 3
+        assert closure.selected_rows["dept_emp"] == {(101, "d001")}
+        assert closure.selected_rows["employees"] == {101}
+        assert closure.selected_rows["departments"] == {"d001"}
+        assert closure.closure_additions["employees"] == {101}
+        assert closure.closure_additions["departments"] == {"d001"}
+

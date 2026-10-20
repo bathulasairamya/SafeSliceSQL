@@ -218,11 +218,14 @@ def _resolve_fks_batch(
             return results
         elif isinstance(table_data, list):
             # Build index in O(N) once to avoid O(M*N) linear scanning
-            pk_col = pk_columns[0] if pk_columns else "id"
+            is_composite = len(pk_columns) > 1
             indexed: dict[Any, dict[str, Any]] = {}
             for row in table_data:
                 if isinstance(row, dict):
-                    key = row.get(pk_col)
+                    if is_composite:
+                        key = tuple(row.get(c) for c in pk_columns)
+                    else:
+                        key = row.get(pk_columns[0] if pk_columns else "id")
                     if key is not None:
                         indexed[key] = row
             for pk in pk_values:
@@ -236,10 +239,9 @@ def _resolve_fks_batch(
 
     # 3. SQLAlchemy Engine or Connection
     if hasattr(engine, "connect"):
-        primary_key_col = pk_columns[0] if pk_columns else "id"
         quoted_table = _quote_ident(table_name)
-        quoted_pk = _quote_ident(primary_key_col)
         quoted_fks = ", ".join(_quote_ident(fk) for fk in fk_columns)
+        is_composite = len(pk_columns) > 1
 
         # Chunk large lists of PKs (500 per query) to avoid parameter limits
         chunk_size = 500
@@ -247,16 +249,41 @@ def _resolve_fks_batch(
             with engine.connect() as conn:
                 for i in range(0, len(pk_values), chunk_size):
                     batch = pk_values[i : i + chunk_size]
-                    param_names = [f"pk_{j}" for j in range(len(batch))]
-                    in_clause = ", ".join(f":{p}" for p in param_names)
-                    stmt = sa.text(
-                        f"SELECT {quoted_pk}, {quoted_fks} FROM {quoted_table} WHERE {quoted_pk} IN ({in_clause})"
-                    )
-                    params = dict(zip(param_names, batch))
-                    exec_res = conn.execute(stmt, params)
-                    for row in exec_res.mappings():
-                        r_pk = row[primary_key_col]
-                        results[r_pk] = {fk: row[fk] for fk in fk_columns}
+
+                    if is_composite:
+                        quoted_pks = ", ".join(_quote_ident(c) for c in pk_columns)
+                        conds = []
+                        params = {}
+                        for idx, pk_tup in enumerate(batch):
+                            tup_vals = pk_tup if isinstance(pk_tup, (tuple, list)) else (pk_tup,)
+                            sub_conds = []
+                            for c_idx, col in enumerate(pk_columns):
+                                p_name = f"pk_{idx}_{c_idx}"
+                                sub_conds.append(f"{_quote_ident(col)} = :{p_name}")
+                                params[p_name] = tup_vals[c_idx] if c_idx < len(tup_vals) else None
+                            conds.append(f"({' AND '.join(sub_conds)})")
+
+                        where_clause = " OR ".join(conds)
+                        stmt = sa.text(
+                            f"SELECT {quoted_pks}, {quoted_fks} FROM {quoted_table} WHERE {where_clause}"
+                        )
+                        exec_res = conn.execute(stmt, params)
+                        for row in exec_res.mappings():
+                            key_tuple = tuple(row[c] for c in pk_columns)
+                            results[key_tuple] = {fk: row[fk] for fk in fk_columns}
+                    else:
+                        primary_key_col = pk_columns[0] if pk_columns else "id"
+                        quoted_pk = _quote_ident(primary_key_col)
+                        param_names = [f"pk_{j}" for j in range(len(batch))]
+                        in_clause = ", ".join(f":{p}" for p in param_names)
+                        stmt = sa.text(
+                            f"SELECT {quoted_pk}, {quoted_fks} FROM {quoted_table} WHERE {quoted_pk} IN ({in_clause})"
+                        )
+                        params = dict(zip(param_names, batch))
+                        exec_res = conn.execute(stmt, params)
+                        for row in exec_res.mappings():
+                            r_pk = row[primary_key_col]
+                            results[r_pk] = {fk: row[fk] for fk in fk_columns}
         except Exception as exc:
             logger.error(
                 "Database error while batch querying FKs on table '%s': %s",

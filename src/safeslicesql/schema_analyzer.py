@@ -133,9 +133,9 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
                         c.is_primary_key = True
                 warn_msg = (
                     f"Table '{table_name}' has composite primary key: "
-                    f"{constrained_cols}. v1 supports single-column primary keys only."
+                    f"{constrained_cols}."
                 )
-                logger.warning(warn_msg)
+                logger.info(warn_msg)
                 schema.unsupported_features.append(warn_msg)
             else:
                 warn_msg = f"Table '{table_name}' has no primary key defined."

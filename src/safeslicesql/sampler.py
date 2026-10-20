@@ -135,12 +135,12 @@ def _finalize_selection(
 
 def select_rows(
     schema: SchemaMetadata,
-    workload: WorkloadAnalysis,
-    graph: DependencyGraph,
-    engine: Engine,
-    budget: int,
-    method: str,
-    seed: int,
+    workload: WorkloadAnalysis | None = None,
+    graph: DependencyGraph | None = None,
+    engine: Engine | dict[str, Any] | None = None,
+    budget: int = 0,
+    method: str = "random-repair",
+    seed: int = 42,
 ) -> SelectionResult:
     """
     Select rows using the specified method.
@@ -155,11 +155,11 @@ def select_rows(
     ----------
     schema : SchemaMetadata
         Source database schema metadata.
-    workload : WorkloadAnalysis
+    workload : WorkloadAnalysis or None
         Parsed workload analysis (used by workload-aware method).
-    graph : DependencyGraph
+    graph : DependencyGraph or None
         Foreign-key dependency graph.
-    engine : sqlalchemy.Engine
+    engine : sqlalchemy.Engine or None
         Source database engine.
     budget : int
         Maximum total rows allowed in the subset.
@@ -184,6 +184,8 @@ def select_rows(
             f"Unknown method '{method}'. "
             f"Supported methods: {', '.join(METHODS)}"
         )
+
+    graph = _ensure_graph(schema, graph)
 
     if method == "random-repair":
         return _select_random_repair(schema, graph, engine, budget, seed)
