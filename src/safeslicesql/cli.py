@@ -19,15 +19,34 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
+from pathlib import Path
 from typing import Optional
 
 import typer
 
 from safeslicesql.config import load_config
-from safeslicesql.db import create_engine, test_connection
+from safeslicesql.db import (
+    create_engine,
+    get_source_engine,
+    get_target_engine,
+    test_connection,
+)
 from safeslicesql.dependency_graph import build_dependency_graph
 from safeslicesql.logging_config import setup_logging
+from safeslicesql.reporting import (
+    print_generation_summary,
+    print_selection_summary,
+    print_validation_summary,
+    print_workload_summary,
+    save_run_results_csv,
+)
+from safeslicesql.sampler import select_rows
 from safeslicesql.schema_analyzer import inspect_schema
+from safeslicesql.subset_generator import materialize_subset
+from safeslicesql.types import BenchmarkRunResult
+from safeslicesql.validator import evaluate_workload, validate_subset
+from safeslicesql.workload_analyzer import analyze_workload
 
 logger = logging.getLogger("safeslicesql.cli")
 
@@ -150,6 +169,21 @@ def run(
         "--workload", "-w",
         help="Path to the SQL workload file.",
     ),
+    source: Optional[str] = typer.Option(
+        None,
+        "--source",
+        help="Override source database name in configuration.",
+    ),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        help="Override target database name in configuration.",
+    ),
+    output_dir: str = typer.Option(
+        "results",
+        "--output-dir", "-o",
+        help="Directory to save CSV run results.",
+    ),
     log_level: str = typer.Option(
         "INFO", "--log-level", "-l",
         help="Logging level.",
@@ -176,16 +210,170 @@ def run(
         raise typer.Exit(code=2)
 
     logger.info(
-        "Run: method=%s, budget=%d%%, seed=%d, workload=%s",
+        "Starting SafeSlice run: method=%s, budget=%d%%, seed=%d, workload=%s",
         method, budget_percent, seed, workload,
     )
 
-    typer.echo(f"[run] Method: {method}")
-    typer.echo(f"[run] Budget: {budget_percent}%")
-    typer.echo(f"[run] Seed: {seed}")
-    typer.echo(f"[run] Workload: {workload}")
-    typer.echo("[run] Not yet implemented — Phases 3-5")
-    raise typer.Exit(code=1)
+    try:
+        config = load_config()
+    except Exception as exc:
+        typer.echo(f"[error] Failed to load configuration: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    if source:
+        config.source_db.database = source
+    if target:
+        config.target_db.database = target
+
+    config_errors = config.validate()
+    if config_errors:
+        for err in config_errors:
+            typer.echo(f"[error] Configuration error: {err}", err=True)
+        raise typer.Exit(code=1)
+
+    source_engine = get_source_engine(config)
+    if not test_connection(source_engine):
+        typer.echo(
+            f"[error] Could not connect to source database '{config.source_db.database}' on "
+            f"{config.source_db.host}:{config.source_db.port}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    target_engine = get_target_engine(config)
+    if not test_connection(target_engine):
+        typer.echo(
+            f"[error] Could not connect to target database '{config.target_db.database}' on "
+            f"{config.target_db.host}:{config.target_db.port}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # 1. Inspect schema & build dependency graph
+    try:
+        schema = inspect_schema(source_engine)
+        graph = build_dependency_graph(schema)
+    except Exception as exc:
+        typer.echo(f"[error] Schema inspection failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    if graph.has_cycles:
+        typer.echo("[error] Cyclic foreign-key dependencies detected. Unsupported in v1.", err=True)
+        raise typer.Exit(code=1)
+
+    # 2. Compute budget
+    total_source_rows = schema.total_row_count
+    budget = max(1, int(total_source_rows * (budget_percent / 100.0)))
+    logger.info("Total source rows: %d, Target budget: %d rows (%d%%)", total_source_rows, budget, budget_percent)
+
+    # 3. Workload Analysis
+    workload_path = Path(workload)
+    workload_analysis = None
+    if workload_path.exists():
+        try:
+            workload_analysis = analyze_workload(workload_path, engine=source_engine)
+            logger.info("Parsed workload with %d queries (%d supported)",
+                        workload_analysis.total_queries, workload_analysis.supported_queries)
+        except Exception as exc:
+            logger.warning("Workload analysis failed: %s", exc)
+
+    # 4. Selection
+    run_id = f"{method}_{budget_percent}pct_s{seed}_{int(time.time())}"
+    t0 = time.time()
+    try:
+        selection = select_rows(
+            method=method,
+            source_engine=source_engine,
+            schema=schema,
+            graph=graph,
+            budget=budget,
+            seed=seed,
+            workload_analysis=workload_analysis,
+        )
+    except Exception as exc:
+        typer.echo(f"[error] Row selection failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+    runtime_selection = time.time() - t0
+    print_selection_summary(selection)
+
+    # 5. Materialization
+    t0 = time.time()
+    try:
+        generation = materialize_subset(
+            source_engine=source_engine,
+            target_engine=target_engine,
+            schema=schema,
+            selection=selection,
+            graph=graph,
+            target_db_name=config.target_db.database,
+        )
+    except Exception as exc:
+        typer.echo(f"[error] Materialization failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+    runtime_materialization = time.time() - t0
+    print_generation_summary(generation)
+
+    if not generation.success:
+        typer.echo(f"[error] Materialization failed: {generation.error_message}", err=True)
+        raise typer.Exit(code=1)
+
+    # 6. Validation
+    t0 = time.time()
+    try:
+        validation = validate_subset(
+            source_engine=source_engine,
+            target_engine=target_engine,
+            budget_limit=budget,
+        )
+    except Exception as exc:
+        typer.echo(f"[error] Validation failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+    runtime_validation = time.time() - t0
+    print_validation_summary(validation)
+
+    # 7. Workload Evaluation
+    workload_report = None
+    runtime_workload = 0.0
+    if workload_analysis and workload_analysis.supported_queries > 0:
+        t0 = time.time()
+        try:
+            workload_report = evaluate_workload(
+                source_engine=source_engine,
+                target_engine=target_engine,
+                workload=workload_analysis,
+            )
+            print_workload_summary(workload_report)
+        except Exception as exc:
+            logger.warning("Workload evaluation encountered an error: %s", exc)
+        runtime_workload = time.time() - t0
+
+    # 8. Save CSV results
+    run_result = BenchmarkRunResult(
+        run_id=run_id,
+        method=method,
+        seed=seed,
+        budget_percent=float(budget_percent),
+        dataset_size=total_source_rows,
+        selection=selection,
+        generation=generation,
+        validation=validation,
+        workload=workload_report,
+        runtime_selection=runtime_selection,
+        runtime_materialization=runtime_materialization,
+        runtime_validation=runtime_validation,
+        runtime_workload_eval=runtime_workload,
+        success=validation.is_valid and generation.success,
+        error_message="; ".join(validation.errors) if validation.errors else "",
+    )
+
+    csv_path = save_run_results_csv(run_result, output_dir=output_dir)
+    typer.echo(f"[run] Results exported to {csv_path}")
+
+    if not validation.is_valid:
+        typer.echo("[error] Validation checks failed.", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"[run] SafeSlice completed successfully.")
 
 
 @app.command()
@@ -200,6 +388,16 @@ def validate(
         "--target",
         help="Target (subset) database name.",
     ),
+    budget_limit: Optional[int] = typer.Option(
+        None,
+        "--budget-limit",
+        help="Optional maximum row count limit.",
+    ),
+    workload: Optional[str] = typer.Option(
+        None,
+        "--workload", "-w",
+        help="Optional workload file path to evaluate retention metrics.",
+    ),
     log_level: str = typer.Option(
         "INFO", "--log-level", "-l",
         help="Logging level.",
@@ -208,10 +406,51 @@ def validate(
     """Validate a generated subset for referential integrity and budget compliance."""
     _init(log_level)
     logger.info("Validating: source=%s, target=%s", source, target)
-    typer.echo(f"[validate] Source: {source}")
-    typer.echo(f"[validate] Target: {target}")
-    typer.echo("[validate] Not yet implemented — Phase 6")
-    raise typer.Exit(code=1)
+
+    try:
+        config = load_config()
+    except Exception as exc:
+        typer.echo(f"[error] Failed to load configuration: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    config.source_db.database = source
+    config.target_db.database = target
+
+    config_errors = config.validate()
+    if config_errors:
+        for err in config_errors:
+            typer.echo(f"[error] Configuration error: {err}", err=True)
+        raise typer.Exit(code=1)
+
+    source_engine = get_source_engine(config)
+    if not test_connection(source_engine):
+        typer.echo(f"[error] Could not connect to source database '{source}'", err=True)
+        raise typer.Exit(code=1)
+
+    target_engine = get_target_engine(config)
+    if not test_connection(target_engine):
+        typer.echo(f"[error] Could not connect to target database '{target}'", err=True)
+        raise typer.Exit(code=1)
+
+    if budget_limit is None:
+        try:
+            schema = inspect_schema(source_engine)
+            budget_limit = schema.total_row_count
+        except Exception:
+            budget_limit = 100_000_000
+
+    report = validate_subset(source_engine, target_engine, budget_limit=budget_limit)
+    print_validation_summary(report)
+
+    if workload:
+        wl_path = Path(workload)
+        if wl_path.exists():
+            wl = analyze_workload(wl_path, engine=source_engine)
+            wl_report = evaluate_workload(source_engine, target_engine, wl)
+            print_workload_summary(wl_report)
+
+    if not report.is_valid:
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -229,9 +468,16 @@ def benchmark(
     """Run the full benchmark matrix from a YAML configuration."""
     _init(log_level)
     logger.info("Running benchmark with config: %s", config)
-    typer.echo(f"[benchmark] Config: {config}")
-    typer.echo("[benchmark] Not yet implemented — Phase 8")
-    raise typer.Exit(code=1)
+
+    try:
+        from safeslicesql.benchmark import run_benchmark
+        run_benchmark(config)
+    except NotImplementedError:
+        typer.echo("[benchmark] Phase 8 benchmark runner is being prepared.", err=True)
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        typer.echo(f"[error] Benchmark failed: {exc}", err=True)
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
