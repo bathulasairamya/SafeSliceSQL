@@ -268,12 +268,13 @@ def _is_supported_query(raw_sql: str) -> tuple[bool, str]:
     if not upper.startswith("SELECT"):
         return False, "Only SELECT statements are supported"
 
-    disallowed = [
-        "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP",
-        "TRUNCATE", "REPLACE", "MERGE", "WITH ", "UNION",
-        "WINDOW", "ROW_NUMBER", "RANK", "DENSE_RANK"
-    ]
-    if any(token in upper for token in disallowed):
+    disallowed_pattern = re.compile(
+        r'\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|REPLACE'
+        r'|MERGE|UNION|WINDOW|ROW_NUMBER|RANK|DENSE_RANK)\b'
+        r'|(?:\bWITH\b\s+\w+\s+AS\b)',
+        re.IGNORECASE,
+    )
+    if disallowed_pattern.search(upper):
         return False, "Unsupported SQL pattern or clause"
 
     if re.search(r"\bLEFT\s+(?:OUTER\s+)?JOIN\b|\bRIGHT\s+(?:OUTER\s+)?JOIN\b|\bFULL\s+(?:OUTER\s+)?JOIN\b", upper):

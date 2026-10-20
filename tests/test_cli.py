@@ -40,8 +40,15 @@ def test_cli_run_invalid_budget():
     assert "budget-percent must be between 1 and 100" in result_zero.output
 
 
-def test_cli_benchmark_not_implemented():
-    """Verify benchmark command handles invocation cleanly."""
-    result = runner.invoke(app, ["benchmark", "--config", "benchmarks/benchmarks.yaml"])
+def test_cli_run_help_includes_dry_run():
+    """Verify safeslice run help includes dry-run option."""
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--dry-run" in result.output
+
+
+def test_cli_benchmark_missing_config():
+    """Verify benchmark command handles missing config cleanly."""
+    result = runner.invoke(app, ["benchmark", "--config", "nonexistent_config_12345.yaml"])
     assert result.exit_code == 1
-    assert "Phase 8" in result.output or "benchmark" in result.output.lower()
+    assert "Benchmark failed" in result.output or "not found" in result.output.lower()

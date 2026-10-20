@@ -17,11 +17,13 @@ Owner: M3
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy import Engine, text
 
+from safeslicesql.db import quote_ident
 from safeslicesql.types import (
     QueryResult,
     ValidationReport,
@@ -31,10 +33,7 @@ from safeslicesql.workload_analyzer import WorkloadAnalysis
 
 logger = logging.getLogger("safeslicesql.validator")
 
-
-def _quote_ident(name: str) -> str:
-    """Safely quote a SQL identifier using backticks."""
-    return f"`{name.replace('`', '``')}`"
+_quote_ident = quote_ident
 
 
 def _get_table_names(engine: Engine) -> list[str]:
@@ -51,12 +50,21 @@ def _row_count(engine: Engine, table_name: str) -> int:
         return int(res.scalar() or 0)
 
 
-def _query_rows(engine: Engine, sql: str) -> list[dict[str, Any]]:
-    """Execute a SQL query and return rows as dicts."""
+def _timed_query_rows(engine: Engine, sql: str) -> tuple[list[dict[str, Any]], float]:
+    """Execute a SQL query and return rows along with execution time in seconds."""
+    t0 = time.perf_counter()
     with engine.connect() as conn:
         result = conn.execute(text(sql))
         columns = list(result.keys())
-        return [dict(zip(columns, row)) for row in result.fetchall()]
+        rows = [dict(zip(columns, row)) for row in result.fetchall()]
+    elapsed = time.perf_counter() - t0
+    return rows, elapsed
+
+
+def _query_rows(engine: Engine, sql: str) -> list[dict[str, Any]]:
+    """Execute a SQL query and return rows as dicts."""
+    rows, _ = _timed_query_rows(engine, sql)
+    return rows
 
 
 def _normalize_rows(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
@@ -71,6 +79,7 @@ def validate_subset(
     source_engine: Engine,
     target_engine: Engine,
     budget_limit: int,
+    initial_source_row_count: int | None = None,
 ) -> ValidationReport:
     """
     Validate a generated subset for correctness across any SQLAlchemy engine.
@@ -80,7 +89,7 @@ def validate_subset(
     - Primary-key uniqueness across all primary key columns
     - Foreign-key referential integrity (0 orphaned references)
     - Hard row budget compliance
-    - Source database unchanged
+    - Source database unchanged (compared against initial_source_row_count if provided)
     """
     source_tables = _get_table_names(source_engine)
     target_tables = _get_table_names(target_engine)
@@ -173,7 +182,10 @@ def validate_subset(
                 except Exception as exc:
                     logger.debug("FK check between %s -> %s failed: %s", child_table, parent_table, exc)
 
-    source_unchanged = (source_total == sum(_row_count(source_engine, t) for t in source_tables))
+    if initial_source_row_count is not None:
+        source_unchanged = (source_total == initial_source_row_count)
+    else:
+        source_unchanged = (source_total == sum(_row_count(source_engine, t) for t in source_tables))
 
     report = ValidationReport(
         pk_unique=pk_unique,
@@ -226,15 +238,19 @@ def evaluate_workload(
             per_query_results.append(result)
             continue
 
+        t_src = 0.0
+        t_tgt = 0.0
         try:
-            source_rows = _query_rows(source_engine, query.raw_sql)
-            target_rows = _query_rows(target_engine, query.raw_sql)
+            source_rows, t_src = _timed_query_rows(source_engine, query.raw_sql)
+            target_rows, t_tgt = _timed_query_rows(target_engine, query.raw_sql)
         except Exception as exc:
             per_query_results.append(
                 QueryResult(
                     query_id=query.query_id,
                     query_text=query.raw_sql,
                     source_row_count=query.source_row_count,
+                    execution_time_source=t_src,
+                    execution_time_target=t_tgt,
                     excluded=True,
                     exclusion_reason=f"Execution failed: {exc}",
                 )
@@ -260,7 +276,8 @@ def evaluate_workload(
                 # Key retention: match on ID/key columns if present, otherwise common rows
                 key_cols = [
                     k for k in source_rows[0].keys()
-                    if k.lower() in ("id", "emp_no", "dept_no") or k.lower().endswith(("_id", "_no"))
+                    if k.lower() in ("id", "emp_no", "dept_no", "pk", "key", "code")
+                    or k.lower().endswith(("_id", "_no", "_code", "_key", "_pk"))
                 ]
                 if key_cols:
                     src_keys = {tuple(str(r.get(c)) for c in key_cols) for r in source_rows}
@@ -309,6 +326,8 @@ def evaluate_workload(
             key_retention=key_retention,
             result_row_retention=result_row_retention,
             aggregate_retention=aggregate_retention,
+            execution_time_source=t_src,
+            execution_time_target=t_tgt,
             excluded=False,
         )
         per_query_results.append(result)

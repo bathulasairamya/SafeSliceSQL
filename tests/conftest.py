@@ -10,7 +10,10 @@ from safeslicesql.config import AppConfig, DatabaseConfig, load_config
 @pytest.fixture(scope="session")
 def app_config() -> AppConfig:
     """Load application configuration from .env for the test session."""
-    return load_config()
+    try:
+        return load_config()
+    except Exception:
+        pytest.skip("No valid .env configuration found; skipping tests that need config")
 
 
 @pytest.fixture(scope="session")

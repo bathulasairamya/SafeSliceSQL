@@ -19,6 +19,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy import Engine
 
+from safeslicesql.db import quote_ident
 from safeslicesql.dependency_graph import DependencyGraph
 from safeslicesql.types import (
     GenerationResult,
@@ -264,7 +265,7 @@ def _ensure_target_database_exists(target_engine: Engine, target_database: str) 
             server_url = target_engine.url.set(database="mysql")
             server_engine = sa.create_engine(server_url)
             with server_engine.connect() as conn:
-                conn.execute(sa.text(f"CREATE DATABASE IF NOT EXISTS `{target_database}`"))
+                conn.execute(sa.text(f"CREATE DATABASE IF NOT EXISTS {quote_ident(target_database)}"))
                 conn.commit()
             server_engine.dispose()
         except Exception as exc:

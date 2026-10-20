@@ -1,0 +1,28 @@
+# SafeSliceSQL Benchmark Configuration
+# Defines the multi-run experiment matrix across methods, budgets, and seeds.
+
+benchmark:
+  name: "safeslicesql_eval"
+  description: "Comparative benchmark across random-repair, referential, and workload-aware sampling."
+
+matrix:
+  methods:
+    - "random-repair"
+    - "referential"
+    - "workload-aware"
+  budget_percents:
+    - 10
+    - 20
+    - 40
+  seeds:
+    - 42
+    - 123
+    - 999
+
+workload:
+  path: "workloads/workload.sql"
+
+output:
+  raw_dir: "results/raw"
+  summary_dir: "results/summaries"
+  plots_dir: "results/plots"

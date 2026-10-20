@@ -138,9 +138,12 @@ def get_table_names(engine: sa.Engine) -> list[str]:
     return tables
 
 
-def _quote_ident(name: str) -> str:
-    """Safely quote a SQL identifier using backticks."""
-    return f"`{name.replace('`', '``')}`"
+def quote_ident(name: str) -> str:
+    """Safely quote a SQL identifier using backticks, escaping inner backticks."""
+    return f"`{str(name).replace('`', '``')}`"
+
+
+_quote_ident = quote_ident
 
 
 def get_row_count(engine: sa.Engine, table_name: str) -> int:

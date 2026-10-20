@@ -114,6 +114,7 @@ def _finalize_selection(
     selected: dict[str, set[Any]],
     rejected_candidates: int,
     selection_log: list[str],
+    closure_additions: int = 0,
 ) -> SelectionResult:
     """Turn a closure dictionary into a normalized SelectionResult."""
     normalized: dict[str, list[Any]] = {}
@@ -126,7 +127,7 @@ def _finalize_selection(
         budget=budget,
         selected_rows=normalized,
         total_selected=total_selected,
-        closure_additions=max(0, total_selected - sum(len(v) for v in selected.values() if False)),
+        closure_additions=closure_additions,
         rejected_candidates=rejected_candidates,
         selection_log=selection_log,
     )
@@ -212,6 +213,7 @@ def _select_random_repair(
     selected: dict[str, set[Any]] = {table: set() for table in schema.table_names}
     selection_log: list[str] = [f"Random repair baseline with seed={seed}"]
     rejected_candidates = 0
+    total_closure_additions = 0
 
     candidate_pairs: list[tuple[str, Any]] = []
     for table_name in schema.table_names:
@@ -234,16 +236,20 @@ def _select_random_repair(
     rng.shuffle(candidate_pairs)
 
     for table_name, pk_value in candidate_pairs:
+        prev_total = _selection_total(selected)
         trial = {table: set(values) for table, values in selected.items()}
         trial.setdefault(table_name, set()).add(pk_value)
         closure = compute_closure(graph, trial, engine=engine, budget=budget)
 
         if closure.is_feasible:
             selected = {table: set(values) for table, values in closure.selected_rows.items()}
+            new_total = _selection_total(selected)
+            total_closure_additions += max(0, new_total - prev_total - 1)
             selection_log.append(
-                f"Accepted {table_name}.{pk_value}: closure={sum(len(values) for values in selected.values())} rows"
+                f"Accepted {table_name}.{pk_value}: "
+                f"closure={new_total} rows (+{new_total - prev_total})"
             )
-            if _selection_total(selected) >= budget:
+            if new_total >= budget:
                 break
             continue
 
@@ -262,7 +268,7 @@ def _select_random_repair(
             if values
         },
         total_selected=_selection_total(selected),
-        closure_additions=0,
+        closure_additions=total_closure_additions,
         rejected_candidates=rejected_candidates,
         selection_log=selection_log,
     )
@@ -294,20 +300,27 @@ def _select_referential(
     selected: dict[str, set[Any]] = {table: set() for table in schema.table_names}
     selection_log: list[str] = [f"Referential baseline with seed={seed}"]
     rejected_candidates = 0
+    total_closure_additions = 0
+    rng = random.Random(seed)
 
     for table_name in table_order:
         pk_values = _all_primary_keys_for_table(schema, table_name, engine)
+        rng.shuffle(pk_values)
         for pk_value in pk_values:
+            prev_total = _selection_total(selected)
             trial = {table: set(values) for table, values in selected.items()}
             trial.setdefault(table_name, set()).add(pk_value)
             closure = compute_closure(graph, trial, engine=engine, budget=budget)
 
             if closure.is_feasible:
                 selected = {table: set(values) for table, values in closure.selected_rows.items()}
+                new_total = _selection_total(selected)
+                total_closure_additions += max(0, new_total - prev_total - 1)
                 selection_log.append(
-                    f"Added {table_name}.{pk_value}: closure={sum(len(values) for values in selected.values())} rows"
+                    f"Added {table_name}.{pk_value}: "
+                    f"closure={new_total} rows (+{new_total - prev_total})"
                 )
-                if _selection_total(selected) >= budget:
+                if new_total >= budget:
                     break
                 continue
 
@@ -329,7 +342,7 @@ def _select_referential(
             if values
         },
         total_selected=_selection_total(selected),
-        closure_additions=0,
+        closure_additions=total_closure_additions,
         rejected_candidates=rejected_candidates,
         selection_log=selection_log,
     )
@@ -391,41 +404,77 @@ def _select_workload_aware(
         key=lambda t: (-table_weights.get(t, 0.0), t),
     )
 
-    # Prioritize candidate seeds based on workload weights and seed
+    # Build candidate pool ordered by table weight, shuffled within tables
     rng = random.Random(seed)
-    candidates: list[tuple[str, Any]] = []
+    remaining: list[tuple[str, Any]] = []
     for table_name in sorted_tables:
         pks = list(cached_pks.get(table_name, []))
         rng.shuffle(pks)
         for pk in pks:
-            candidates.append((table_name, pk))
+            remaining.append((table_name, pk))
 
+    # Windowed greedy selection: evaluate batches of candidates and pick
+    # the highest-scoring feasible one each round. This faithfully implements
+    # the greedy heuristic: score(c|S) = ΔV(c|S) / max(1, ΔD(c|S)).
     rejected_candidates = 0
-    for table_name, pk_value in candidates:
-        if _selection_total(selected) >= budget:
+    total_closure_additions = 0
+    greedy_window = 50
+
+    while remaining and _selection_total(selected) < budget:
+        window = remaining[:greedy_window]
+        if not window:
             break
 
-        if pk_value in selected.get(table_name, set()):
-            continue
-
         current_total = _selection_total(selected)
-        trial = {tbl: set(values) for tbl, values in selected.items()}
-        trial.setdefault(table_name, set()).add(pk_value)
+        best_score = -1.0
+        best_entry: tuple | None = None
+        indices_to_remove: set[int] = set()
 
-        closure = compute_closure(graph, trial, engine=engine, budget=budget)
-        if not closure.is_feasible:
-            rejected_candidates += 1
+        for i, (table_name, pk_value) in enumerate(window):
+            if pk_value in selected.get(table_name, set()):
+                indices_to_remove.add(i)
+                continue
+
+            trial = {tbl: set(values) for tbl, values in selected.items()}
+            trial.setdefault(table_name, set()).add(pk_value)
+            closure = compute_closure(graph, trial, engine=engine, budget=budget)
+
+            if not closure.is_feasible:
+                rejected_candidates += 1
+                indices_to_remove.add(i)
+                selection_log.append(
+                    f"Skipped {table_name}.{pk_value}: "
+                    f"{closure.infeasibility_reason or 'budget exceeded'}"
+                )
+                continue
+
+            additional_rows = max(1, closure.total_rows - current_total)
+            score = table_weights.get(table_name, 1.0) / additional_rows
+
+            if score > best_score:
+                best_score = score
+                best_entry = (i, table_name, pk_value, closure.selected_rows)
+
+        if best_entry is not None:
+            idx, table_name, pk_value, closure_rows = best_entry
+            selected = {tbl: set(values) for tbl, values in closure_rows.items()}
+            new_total = _selection_total(selected)
+            additions = max(0, new_total - current_total - 1)
+            total_closure_additions += additions
             selection_log.append(
-                f"Skipped {table_name}.{pk_value}: {closure.infeasibility_reason or 'budget exceeded'}"
+                f"Selected {table_name}.{pk_value}: score={best_score:.3f}, "
+                f"deps=+{additions}, total_rows={new_total}"
             )
-            continue
+            indices_to_remove.add(idx)
 
-        selected = {tbl: set(values) for tbl, values in closure.selected_rows.items()}
-        additional_rows = max(1, closure.total_rows - current_total)
-        score = table_weights.get(table_name, 1.0) / additional_rows
-        selection_log.append(
-            f"Selected {table_name}.{pk_value}: score={score:.3f}, total_rows={_selection_total(selected)}"
-        )
+        # Remove processed candidates from remaining
+        remaining = [
+            item for j, item in enumerate(remaining)
+            if j >= len(window) or j not in indices_to_remove
+        ]
+
+        if best_entry is None and not indices_to_remove:
+            break  # No progress possible
 
     return SelectionResult(
         method="workload-aware",
@@ -437,7 +486,7 @@ def _select_workload_aware(
             if values
         },
         total_selected=_selection_total(selected),
-        closure_additions=0,
+        closure_additions=total_closure_additions,
         rejected_candidates=rejected_candidates,
         selection_log=selection_log,
     )
