@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy import Engine, text
 
 from safeslicesql.types import (
@@ -31,25 +32,30 @@ from safeslicesql.workload_analyzer import WorkloadAnalysis
 logger = logging.getLogger("safeslicesql.validator")
 
 
+def _quote_ident(name: str) -> str:
+    """Safely quote a SQL identifier using backticks."""
+    return f"`{name.replace('`', '``')}`"
+
+
 def _get_table_names(engine: Engine) -> list[str]:
-    """Return tables visible in the database."""
-    with engine.connect() as conn:
-        rows = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")).fetchall()
-    return [row[0] for row in rows]
+    """Return tables visible in the database across SQLite and MySQL."""
+    inspector = sa.inspect(engine)
+    return sorted(inspector.get_table_names())
 
 
 def _row_count(engine: Engine, table_name: str) -> int:
-    """Count rows in a table using SQLite-compatible SQL."""
+    """Count rows in a table safely across dialects."""
     with engine.connect() as conn:
-        row = conn.execute(text(f'SELECT COUNT(*) FROM "{table_name}"')).fetchone()
-    return int(row[0]) if row else 0
+        stmt = sa.text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}")
+        res = conn.execute(stmt)
+        return int(res.scalar() or 0)
 
 
 def _query_rows(engine: Engine, sql: str) -> list[dict[str, Any]]:
     """Execute a SQL query and return rows as dicts."""
     with engine.connect() as conn:
         result = conn.execute(text(sql))
-        columns = result.keys()
+        columns = list(result.keys())
         return [dict(zip(columns, row)) for row in result.fetchall()]
 
 
@@ -57,7 +63,7 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
     """Normalize row dictionaries into tuples for comparison while preserving values."""
     normalized: list[tuple[Any, ...]] = []
     for row in rows:
-        normalized.append(tuple(sorted(row.items())))
+        normalized.append(tuple(sorted((k, str(v) if v is not None else None) for k, v in row.items())))
     return normalized
 
 
@@ -67,7 +73,14 @@ def validate_subset(
     budget_limit: int,
 ) -> ValidationReport:
     """
-    Validate a generated subset for correctness.
+    Validate a generated subset for correctness across any SQLAlchemy engine.
+
+    Checks:
+    - Target tables presence and column schema compatibility
+    - Primary-key uniqueness across all primary key columns
+    - Foreign-key referential integrity (0 orphaned references)
+    - Hard row budget compliance
+    - Source database unchanged
     """
     source_tables = _get_table_names(source_engine)
     target_tables = _get_table_names(target_engine)
@@ -85,63 +98,110 @@ def validate_subset(
     budget_compliant = actual_rows <= budget_limit
     schema_compatible = set(source_tables) == set(target_tables)
 
-    for table_name in target_tables:
-        with target_engine.connect() as conn:
-            try:
-                metadata = conn.execute(text(f"PRAGMA table_info(\"{table_name}\")")).fetchall()
-            except Exception:
-                metadata = []
-            if not metadata:
-                continue
-            columns = [row[1] for row in metadata]
-            if columns and "id" in columns:
-                duplicates = conn.execute(text(f'SELECT id, COUNT(*) FROM "{table_name}" GROUP BY id HAVING COUNT(*) > 1')).fetchall()
-                if duplicates:
-                    pk_unique = False
-            if table_name in source_tables:
-                source_cols = conn.execute(text(f'PRAGMA table_info("{table_name}")')).fetchall()
-                source_col_names = {row[1] for row in source_cols}
-                if not source_col_names:
-                    schema_compatible = False
+    target_inspector = sa.inspect(target_engine)
+    source_inspector = sa.inspect(source_engine)
 
-    if not missing and schema_compatible and pk_unique and budget_compliant:
-        report = ValidationReport(
-            pk_unique=True,
-            fk_violations=0,
-            fk_violation_details=[],
-            budget_compliant=True,
-            actual_rows=actual_rows,
-            budget_limit=budget_limit,
-            tables_present=target_tables,
-            tables_missing=missing,
-            source_unchanged=(source_total == sum(_row_count(source_engine, table) for table in source_tables)),
-            schema_compatible=True,
-        )
-    else:
-        report = ValidationReport(
-            pk_unique=pk_unique,
-            fk_violations=fk_violations,
-            fk_violation_details=fk_violation_details,
-            budget_compliant=budget_compliant,
-            actual_rows=actual_rows,
-            budget_limit=budget_limit,
-            tables_present=target_tables,
-            tables_missing=missing,
-            source_unchanged=(source_total == sum(_row_count(source_engine, table) for table in source_tables)),
-            schema_compatible=schema_compatible,
-        )
+    # 1. Primary-key uniqueness on target tables
+    for table_name in target_tables:
+        pk_info = target_inspector.get_pk_constraint(table_name)
+        pk_cols = pk_info.get("constrained_columns", [])
+        if pk_cols:
+            quoted_cols = ", ".join(_quote_ident(c) for c in pk_cols)
+            check_pk_sql = (
+                f"SELECT {quoted_cols}, COUNT(*) FROM {_quote_ident(table_name)} "
+                f"GROUP BY {quoted_cols} HAVING COUNT(*) > 1"
+            )
+            with target_engine.connect() as conn:
+                try:
+                    dups = conn.execute(sa.text(check_pk_sql)).fetchall()
+                    if dups:
+                        pk_unique = False
+                except Exception as exc:
+                    logger.debug("PK check on %s failed: %s", table_name, exc)
+
+        # 2. Check column schema compatibility
+        if table_name in source_tables:
+            src_cols = {c["name"] for c in source_inspector.get_columns(table_name)}
+            tgt_cols = {c["name"] for c in target_inspector.get_columns(table_name)}
+            if src_cols != tgt_cols:
+                schema_compatible = False
+
+    # 3. Real foreign-key integrity check: look for orphaned child records
+    for child_table in target_tables:
+        fks = target_inspector.get_foreign_keys(child_table)
+        for fk in fks:
+            parent_table = fk.get("referred_table")
+            c_cols = fk.get("constrained_columns", [])
+            p_cols = fk.get("referred_columns", [])
+
+            if not parent_table or not c_cols or not p_cols:
+                continue
+
+            if parent_table not in target_tables:
+                fk_violations += 1
+                fk_violation_details.append(
+                    f"FK constraint references missing parent table '{parent_table}'"
+                )
+                continue
+
+            child_q = _quote_ident(child_table)
+            parent_q = _quote_ident(parent_table)
+            join_conds = " AND ".join(
+                f"c.{_quote_ident(c_col)} = p.{_quote_ident(p_col)}"
+                for c_col, p_col in zip(c_cols, p_cols)
+            )
+            not_null_conds = " AND ".join(
+                f"c.{_quote_ident(c_col)} IS NOT NULL" for c_col in c_cols
+            )
+            null_parent_conds = " AND ".join(
+                f"p.{_quote_ident(p_col)} IS NULL" for p_col in p_cols
+            )
+
+            check_sql = (
+                f"SELECT COUNT(*) FROM {child_q} c "
+                f"LEFT JOIN {parent_q} p ON {join_conds} "
+                f"WHERE {not_null_conds} AND ({null_parent_conds})"
+            )
+            with target_engine.connect() as conn:
+                try:
+                    orphans = conn.execute(sa.text(check_sql)).scalar() or 0
+                    if orphans > 0:
+                        fk_violations += int(orphans)
+                        fk_violation_details.append(
+                            f"{orphans} orphaned row(s) in '{child_table}' referencing '{parent_table}'"
+                        )
+                except Exception as exc:
+                    logger.debug("FK check between %s -> %s failed: %s", child_table, parent_table, exc)
+
+    source_unchanged = (source_total == sum(_row_count(source_engine, t) for t in source_tables))
+
+    report = ValidationReport(
+        pk_unique=pk_unique,
+        fk_violations=fk_violations,
+        fk_violation_details=fk_violation_details,
+        budget_compliant=budget_compliant,
+        actual_rows=actual_rows,
+        budget_limit=budget_limit,
+        tables_present=target_tables,
+        tables_missing=missing,
+        source_unchanged=source_unchanged,
+        schema_compatible=schema_compatible,
+    )
 
     report.errors = []
     if not report.pk_unique:
         report.errors.append("Target table primary keys are not unique.")
     if report.fk_violations > 0:
-        report.errors.append("Target table contains foreign-key violations.")
+        report.errors.append(f"Target table contains {report.fk_violations} foreign-key violation(s).")
     if not report.budget_compliant:
-        report.errors.append("Target row count exceeds the budget limit.")
+        report.errors.append(f"Target row count ({actual_rows}) exceeds the budget limit ({budget_limit}).")
     if report.tables_missing:
         report.errors.append(f"Missing expected tables: {report.tables_missing}")
     if not report.schema_compatible:
         report.errors.append("Target schema differs from the source schema.")
+    if not report.source_unchanged:
+        report.errors.append("Source database row count has been modified.")
+
     return report
 
 
@@ -191,11 +251,42 @@ def evaluate_workload(
         if source_rows:
             source_norm = _normalize_rows(source_rows)
             target_norm = _normalize_rows(target_rows)
+
             if target_rows:
+                # Result row retention (exact tuple overlap)
                 common = set(source_norm) & set(target_norm)
                 result_row_retention = len(common) / len(source_norm) if source_norm else 0.0
-                key_retention = min(1.0, len(common) / max(1, len(source_norm)))
-                aggregate_retention = result_row_retention
+
+                # Key retention: match on ID/key columns if present, otherwise common rows
+                key_cols = [
+                    k for k in source_rows[0].keys()
+                    if k.lower() in ("id", "emp_no", "dept_no") or k.lower().endswith(("_id", "_no"))
+                ]
+                if key_cols:
+                    src_keys = {tuple(str(r.get(c)) for c in key_cols) for r in source_rows}
+                    tgt_keys = {tuple(str(r.get(c)) for c in key_cols) for r in target_rows}
+                    key_retention = len(src_keys & tgt_keys) / len(src_keys) if src_keys else 0.0
+                else:
+                    key_retention = result_row_retention
+
+                # Aggregate retention: for GROUP BY queries, measure group key survival
+                if query.group_columns or query.aggregate_functions:
+                    group_col_names = [col_name for _, col_name in query.group_columns]
+                    if not group_col_names and source_rows:
+                        # Fallback to non-aggregate output columns
+                        group_col_names = [
+                            k for k in source_rows[0].keys()
+                            if not any(agg.lower() in k.lower() for agg in ("count", "sum", "avg", "min", "max", "cnt"))
+                        ]
+
+                    if group_col_names:
+                        src_groups = {tuple(str(r.get(c)) for c in group_col_names) for r in source_rows}
+                        tgt_groups = {tuple(str(r.get(c)) for c in group_col_names) for r in target_rows}
+                        aggregate_retention = len(src_groups & tgt_groups) / len(src_groups) if src_groups else 0.0
+                    else:
+                        aggregate_retention = 1.0 if target_rows else 0.0
+                else:
+                    aggregate_retention = result_row_retention
             else:
                 result_row_retention = 0.0
                 key_retention = 0.0

@@ -126,49 +126,127 @@ def load_workload(workload_path: str | Path) -> list[str]:
     return queries
 
 
-def _extract_table_tokens(sql: str) -> list[str]:
-    """Return table names appearing in FROM/JOIN clauses in order."""
+SQL_KEYWORDS = {
+    "WHERE", "JOIN", "ON", "INNER", "LEFT", "RIGHT", "CROSS", "NATURAL",
+    "GROUP", "ORDER", "HAVING", "LIMIT", "SET", "USING", "AS", "BY",
+    "AND", "OR", "NOT", "IN", "IS", "NULL", "LIKE", "BETWEEN", "SELECT",
+    "FROM", "ASC", "DESC", "DISTINCT", "ALL", "EXISTS", "CASE", "WHEN",
+    "THEN", "ELSE", "END", "TRUE", "FALSE"
+}
+
+
+def _extract_tables_and_aliases(sql: str) -> tuple[list[str], dict[str, str]]:
+    """
+    Extract table names and alias mappings from FROM and JOIN clauses.
+
+    Returns
+    -------
+    tuple[list[str], dict[str, str]]
+        List of unique table names and mapping of alias -> table_name.
+    """
     table_names: list[str] = []
-    for match in re.finditer(
-        r"\b(?:FROM|JOIN)\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][\w]*)",
-        sql,
-        flags=re.IGNORECASE,
-    ):
-        table_names.append(match.group(1))
-    return table_names
+    alias_map: dict[str, str] = {}
+
+    pattern = re.compile(
+        r"\b(?:FROM|JOIN)\s+([A-Za-z_][\w]*)(?:\s+(?:AS\s+)?([A-Za-z_][\w]*))?",
+        re.IGNORECASE,
+    )
+
+    for match in pattern.finditer(sql):
+        tbl = match.group(1)
+        alias = match.group(2)
+
+        if tbl.upper() in SQL_KEYWORDS:
+            continue
+
+        if tbl not in table_names:
+            table_names.append(tbl)
+        alias_map[tbl] = tbl
+        alias_map[tbl.lower()] = tbl
+
+        if alias and alias.upper() not in SQL_KEYWORDS:
+            alias_map[alias] = tbl
+            alias_map[alias.lower()] = tbl
+
+    return table_names, alias_map
 
 
-def _extract_join_pairs(sql: str, tables: list[str]) -> list[tuple[str, str]]:
+def _extract_join_pairs(sql: str, tables: list[str], alias_map: dict[str, str]) -> list[tuple[str, str]]:
     """Return pairs of tables joined in the query."""
     join_pairs: list[tuple[str, str]] = []
-    if len(tables) < 2:
-        return join_pairs
 
-    for current in tables[1:]:
-        prev = tables[0]
-        if current != prev:
-            join_pairs.append((prev, current))
+    # Try parsing explicit ON clauses: ON a.col = b.col
+    on_pattern = re.compile(
+        r"\bON\s+([A-Za-z_][\w]*)\.[A-Za-z_][\w]*\s*=\s*([A-Za-z_][\w]*)\.[A-Za-z_][\w]*",
+        re.IGNORECASE,
+    )
+    for match in on_pattern.finditer(sql):
+        t1 = alias_map.get(match.group(1), match.group(1))
+        t2 = alias_map.get(match.group(2), match.group(2))
+        if t1 != t2:
+            pair = tuple(sorted([t1, t2]))
+            if pair not in join_pairs:
+                join_pairs.append(pair)
+
+    if not join_pairs and len(tables) >= 2:
+        for i in range(1, len(tables)):
+            pair = (tables[i - 1], tables[i])
+            if pair not in join_pairs:
+                join_pairs.append(pair)
+
     return join_pairs
 
 
-def _extract_column_refs(sql: str) -> list[tuple[str, str]]:
-    """Parse table.column references from WHERE/HAVING/GROUP BY sections."""
+def _extract_column_refs(
+    clause: str,
+    alias_map: dict[str, str],
+    tables: list[str],
+) -> list[tuple[str, str]]:
+    """Parse table.column references with alias resolution and single-table fallback."""
+    if not clause:
+        return []
+
     refs: list[tuple[str, str]] = []
-    for match in re.finditer(
-        r"([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)",
-        sql,
-        flags=re.IGNORECASE,
-    ):
-        refs.append((match.group(1), match.group(2)))
+
+    # 1. Qualified references: alias.column or table.column
+    for match in re.finditer(r"([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)", clause):
+        prefix, col = match.group(1), match.group(2)
+        resolved_table = alias_map.get(prefix, alias_map.get(prefix.lower(), prefix))
+        ref = (resolved_table, col)
+        if ref not in refs:
+            refs.append(ref)
+
+    # 2. Single-table unqualified column fallback: col > val
+    if not refs and len(tables) == 1:
+        tbl = tables[0]
+        for match in re.finditer(
+            r"\b([A-Za-z_][\w]*)\s*(?:[=><!]|LIKE|IN|IS|BETWEEN)",
+            clause,
+            re.IGNORECASE,
+        ):
+            col = match.group(1)
+            if col.upper() not in SQL_KEYWORDS:
+                ref = (tbl, col)
+                if ref not in refs:
+                    refs.append(ref)
+
     return refs
 
 
-def _extract_group_columns(sql: str) -> list[tuple[str, str]]:
-    """Extract GROUP BY table.column references."""
-    group_sql = re.search(r"\bGROUP\s+BY\b(.*?)(?:\bHAVING\b|\bORDER\s+BY\b|$)", sql, flags=re.IGNORECASE | re.DOTALL)
+def _extract_group_columns(
+    sql: str,
+    alias_map: dict[str, str],
+    tables: list[str],
+) -> list[tuple[str, str]]:
+    """Extract GROUP BY table.column references with alias resolution."""
+    group_sql = re.search(
+        r"\bGROUP\s+BY\b(.*?)(?:\bHAVING\b|\bORDER\s+BY\b|$)",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     if not group_sql:
         return []
-    return _extract_column_refs(group_sql.group(1))
+    return _extract_column_refs(group_sql.group(1), alias_map, tables)
 
 
 def _extract_aggregates(sql: str) -> list[str]:
@@ -231,11 +309,18 @@ def analyze_workload(
         query = QueryInfo(f"Q{index}", sql)
         cleaned = re.sub(r"--.*?$", "", sql, flags=re.MULTILINE)
         query.raw_sql = cleaned.strip()
-        tables = _extract_table_tokens(cleaned)
-        query.tables = list(dict.fromkeys(tables))
-        query.join_tables = _extract_join_pairs(cleaned, query.tables)
-        query.filter_columns = _extract_column_refs(re.search(r"\bWHERE\b(.*?)(?:\bGROUP\s+BY\b|\bHAVING\b|\bORDER\s+BY\b|$)", cleaned, flags=re.IGNORECASE | re.DOTALL).group(1) if re.search(r"\bWHERE\b(.*?)(?:\bGROUP\s+BY\b|\bHAVING\b|\bORDER\s+BY\b|$)", cleaned, flags=re.IGNORECASE | re.DOTALL) else "")
-        query.group_columns = _extract_group_columns(cleaned)
+        tables, alias_map = _extract_tables_and_aliases(cleaned)
+        query.tables = tables
+        query.join_tables = _extract_join_pairs(cleaned, query.tables, alias_map)
+
+        where_match = re.search(
+            r"\bWHERE\b(.*?)(?:\bGROUP\s+BY\b|\bHAVING\b|\bORDER\s+BY\b|$)",
+            cleaned,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        where_clause = where_match.group(1) if where_match else ""
+        query.filter_columns = _extract_column_refs(where_clause, alias_map, query.tables)
+        query.group_columns = _extract_group_columns(cleaned, alias_map, query.tables)
         query.aggregate_functions = _extract_aggregates(cleaned)
 
         is_supported, reason = _is_supported_query(cleaned)

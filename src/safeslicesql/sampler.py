@@ -61,7 +61,7 @@ def _all_primary_keys_for_table(
         return []
 
     pk_cols = table_meta.effective_primary_keys or ["id"]
-    pk_col = pk_cols[0]
+    is_composite = len(pk_cols) > 1
 
     if isinstance(engine, dict):
         table_rows = engine.get(table_name, {})
@@ -71,18 +71,29 @@ def _all_primary_keys_for_table(
             keys: list[Any] = []
             for row in table_rows:
                 if isinstance(row, dict):
-                    value = row.get(pk_col)
-                    if value is not None:
-                        keys.append(value)
+                    if is_composite:
+                        val = tuple(row.get(c) for c in pk_cols)
+                        if all(v is not None for v in val):
+                            keys.append(val)
+                    else:
+                        val = row.get(pk_cols[0])
+                        if val is not None:
+                            keys.append(val)
             return _stable_pk_values(keys)
         return []
 
     if hasattr(engine, "connect"):
         try:
             with engine.connect() as conn:
-                stmt = sa.text(f"SELECT `{pk_col}` FROM `{table_name}` ORDER BY `{pk_col}`")
+                quoted_cols = ", ".join(f"`{c.replace('`', '``')}`" for c in pk_cols)
+                quoted_table = f"`{table_name.replace('`', '``')}`"
+                stmt = sa.text(f"SELECT {quoted_cols} FROM {quoted_table} ORDER BY {quoted_cols}")
                 rows = conn.execute(stmt).mappings().all()
-                return _stable_pk_values([row[pk_col] for row in rows])
+                if is_composite:
+                    raw_keys = [tuple(row[c] for c in pk_cols) for row in rows]
+                else:
+                    raw_keys = [row[pk_cols[0]] for row in rows]
+                return _stable_pk_values(raw_keys)
         except Exception as exc:  # pragma: no cover - live DB fallback
             logger.warning("Unable to fetch PKs for table '%s': %s", table_name, exc)
             return []
@@ -369,51 +380,51 @@ def _select_workload_aware(
     if not table_weights:
         table_weights = {table_name: 1.0 for table_name in schema.table_names}
 
+    # Pre-fetch candidate primary keys once to avoid repeated DB queries in loop
+    cached_pks: dict[str, list[Any]] = {}
+    for table_name in schema.table_names:
+        cached_pks[table_name] = _all_primary_keys_for_table(schema, table_name, engine)
+
+    # Order tables by workload weight (highest weight first)
+    sorted_tables = sorted(
+        schema.table_names,
+        key=lambda t: (-table_weights.get(t, 0.0), t),
+    )
+
+    # Prioritize candidate seeds based on workload weights and seed
+    rng = random.Random(seed)
+    candidates: list[tuple[str, Any]] = []
+    for table_name in sorted_tables:
+        pks = list(cached_pks.get(table_name, []))
+        rng.shuffle(pks)
+        for pk in pks:
+            candidates.append((table_name, pk))
+
     rejected_candidates = 0
-    while True:
+    for table_name, pk_value in candidates:
+        if _selection_total(selected) >= budget:
+            break
+
+        if pk_value in selected.get(table_name, set()):
+            continue
+
         current_total = _selection_total(selected)
-        if current_total >= budget:
-            break
+        trial = {tbl: set(values) for tbl, values in selected.items()}
+        trial.setdefault(table_name, set()).add(pk_value)
 
-        best_choice: tuple[float, str, Any] | None = None
-        for table_name in schema.table_names:
-            for pk_value in _all_primary_keys_for_table(schema, table_name, engine):
-                if pk_value in selected.get(table_name, set()):
-                    continue
-
-                trial = {tbl: set(values) for tbl, values in selected.items()}
-                trial.setdefault(table_name, set()).add(pk_value)
-                closure = compute_closure(graph, trial, engine=engine, budget=budget)
-                if not closure.is_feasible:
-                    rejected_candidates += 1
-                    continue
-
-                additional_rows = max(1, closure.total_rows - current_total)
-                workload_value = table_weights.get(table_name, 1.0)
-                score = workload_value / additional_rows
-
-                tie_key = (table_name, str(pk_value))
-                candidate = (score, tie_key[0], tie_key[1])
-                if best_choice is None or candidate[0] > best_choice[0] or (
-                    abs(candidate[0] - best_choice[0]) < 1e-12 and tie_key < (best_choice[1], str(best_choice[2]))
-                ):
-                    best_choice = (score, table_name, pk_value)
-
-        if best_choice is None:
-            break
-
-        _, table_name, pk_value = best_choice
-        selected.setdefault(table_name, set()).add(pk_value)
-        closure = compute_closure(graph, selected, engine=engine, budget=budget)
+        closure = compute_closure(graph, trial, engine=engine, budget=budget)
         if not closure.is_feasible:
-            selected[table_name].discard(pk_value)
             rejected_candidates += 1
-            selection_log.append(f"Skipped {table_name}.{pk_value}: budget infeasible after closure")
-            break
+            selection_log.append(
+                f"Skipped {table_name}.{pk_value}: {closure.infeasibility_reason or 'budget exceeded'}"
+            )
+            continue
 
         selected = {tbl: set(values) for tbl, values in closure.selected_rows.items()}
+        additional_rows = max(1, closure.total_rows - current_total)
+        score = table_weights.get(table_name, 1.0) / additional_rows
         selection_log.append(
-            f"Selected {table_name}.{pk_value}: score={best_choice[0]:.3f}, total_rows={_selection_total(selected)}"
+            f"Selected {table_name}.{pk_value}: score={score:.3f}, total_rows={_selection_total(selected)}"
         )
 
     return SelectionResult(

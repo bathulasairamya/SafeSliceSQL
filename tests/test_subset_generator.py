@@ -349,3 +349,54 @@ class TestSubsetMaterializer:
         assert "departments" in meta.tables
         assert "employees" in meta.tables
         assert "dept_emp" in meta.tables
+
+    def test_materialize_composite_pk_table(self):
+        """Tables with composite primary keys (e.g. dept_emp) materialize correctly."""
+        source = sa.create_engine("sqlite:///:memory:")
+        target = sa.create_engine("sqlite:///:memory:")
+
+        with source.connect() as conn:
+            conn.execute(text("CREATE TABLE departments (dept_no VARCHAR(4) PRIMARY KEY, dept_name VARCHAR(40));"))
+            conn.execute(text("CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, name VARCHAR(40));"))
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE dept_emp (
+                        emp_no INTEGER NOT NULL,
+                        dept_no VARCHAR(4) NOT NULL,
+                        from_date VARCHAR(10),
+                        PRIMARY KEY (emp_no, dept_no),
+                        FOREIGN KEY (emp_no) REFERENCES employees(emp_no),
+                        FOREIGN KEY (dept_no) REFERENCES departments(dept_no)
+                    );
+                    """
+                )
+            )
+            conn.execute(text("INSERT INTO departments VALUES ('d001', 'Engineering'), ('d002', 'Sales');"))
+            conn.execute(text("INSERT INTO employees VALUES (101, 'Ada'), (102, 'Grace');"))
+            conn.execute(text("INSERT INTO dept_emp VALUES (101, 'd001', '2020-01-01'), (102, 'd002', '2021-01-01');"))
+            conn.commit()
+
+        schema = inspect_schema(source)
+        graph = build_dependency_graph(schema)
+
+        selection = SelectionResult(
+            method="test",
+            seed=42,
+            budget=10,
+            selected_rows={
+                "departments": {"d001"},
+                "employees": {101},
+                "dept_emp": {(101, "d001")},
+            },
+            total_selected=3,
+        )
+
+        res = materialize_subset(source, target, schema, selection, graph, "target_db")
+        assert res.success is True
+        assert res.total_rows_inserted == 3
+
+        with target.connect() as conn:
+            rows = conn.execute(text("SELECT emp_no, dept_no FROM dept_emp")).fetchall()
+            assert rows == [(101, "d001")]
+

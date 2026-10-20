@@ -164,14 +164,19 @@ def materialize_subset(
                     continue
 
                 tbl_meta = schema.tables.get(tbl_name)
-                pk_col = tbl_meta.primary_key if tbl_meta else None
-                if not pk_col:
-                    logger.warning(
-                        "Skipping table '%s': no primary key defined for row selection lookup",
-                        tbl_name,
-                    )
-                    rows_inserted[tbl_name] = 0
-                    continue
+                pk_cols = tbl_meta.effective_primary_keys if tbl_meta else []
+                if not pk_cols:
+                    # Check if 'id' exists on table
+                    col_names = tbl_meta.column_names if tbl_meta else []
+                    if "id" in col_names:
+                        pk_cols = ["id"]
+                    else:
+                        logger.warning(
+                            "Skipping table '%s': no primary key defined for row selection lookup",
+                            tbl_name,
+                        )
+                        rows_inserted[tbl_name] = 0
+                        continue
 
                 target_table = target_meta.tables.get(tbl_name)
                 if target_table is None:
@@ -179,14 +184,36 @@ def materialize_subset(
 
                 inserted_for_table = 0
                 pks_list = list(selected_pks)
+                quoted_table = f"`{tbl_name.replace('`', '``')}`"
 
                 for i in range(0, len(pks_list), chunk_size):
                     chunk = pks_list[i : i + chunk_size]
-                    stmt = sa.text(
-                        f"SELECT * FROM `{tbl_name}` WHERE `{pk_col}` IN :pks"
-                    ).bindparams(sa.bindparam("pks", expanding=True))
 
-                    res = s_conn.execute(stmt, {"pks": chunk})
+                    if len(pk_cols) == 1:
+                        pk_col = pk_cols[0]
+                        quoted_pk = f"`{pk_col.replace('`', '``')}`"
+                        stmt = sa.text(
+                            f"SELECT * FROM {quoted_table} WHERE {quoted_pk} IN :pks"
+                        ).bindparams(sa.bindparam("pks", expanding=True))
+                        res = s_conn.execute(stmt, {"pks": chunk})
+                    else:
+                        # Composite key condition: (col1 = :p0_0 AND col2 = :p0_1) OR ...
+                        conds = []
+                        params = {}
+                        for idx, tup in enumerate(chunk):
+                            tup_vals = tup if isinstance(tup, (tuple, list)) else (tup,)
+                            sub_conds = []
+                            for c_idx, c_name in enumerate(pk_cols):
+                                p_name = f"p_{idx}_{c_idx}"
+                                q_col = f"`{c_name.replace('`', '``')}`"
+                                sub_conds.append(f"{q_col} = :{p_name}")
+                                params[p_name] = tup_vals[c_idx] if c_idx < len(tup_vals) else None
+                            conds.append(f"({' AND '.join(sub_conds)})")
+
+                        where_clause = " OR ".join(conds)
+                        stmt = sa.text(f"SELECT * FROM {quoted_table} WHERE {where_clause}")
+                        res = s_conn.execute(stmt, params)
+
                     row_dicts = [dict(r) for r in res.mappings().all()]
 
                     if row_dicts:
