@@ -29,6 +29,14 @@ from safeslicesql.types import (
 
 logger = logging.getLogger("safeslicesql.dependency_graph")
 
+# In-memory FK resolution cache keyed by (engine_id, table_name, tuple(sorted(fk_columns)))
+_ENGINE_FK_CACHE: dict[tuple[int, str, tuple[str, ...]], dict[Any, dict[str, Any]]] = {}
+
+
+def clear_fk_cache() -> None:
+    """Clear the cached foreign key resolution cache."""
+    _ENGINE_FK_CACHE.clear()
+
 
 class DependencyGraph:
     """
@@ -239,69 +247,74 @@ def _resolve_fks_batch(
 
     # 3. SQLAlchemy Engine or Connection
     if hasattr(engine, "connect"):
-        quoted_table = _quote_ident(table_name)
-        quoted_fks = ", ".join(_quote_ident(fk) for fk in fk_columns)
-        is_composite = len(pk_columns) > 1
+        cache_key = (id(engine), table_name, tuple(sorted(fk_columns)))
+        tbl_cache = _ENGINE_FK_CACHE.setdefault(cache_key, {})
 
-        # Chunk large lists of PKs (500 per query) to avoid parameter limits
-        chunk_size = 500
-        try:
-            with engine.connect() as conn:
-                for i in range(0, len(pk_values), chunk_size):
-                    batch = pk_values[i : i + chunk_size]
+        missing_pks = [pk for pk in pk_values if pk not in tbl_cache]
 
-                    if is_composite:
-                        quoted_pks = ", ".join(_quote_ident(c) for c in pk_columns)
-                        conds = []
-                        params = {}
-                        for idx, pk_tup in enumerate(batch):
-                            tup_vals = pk_tup if isinstance(pk_tup, (tuple, list)) else (pk_tup,)
-                            sub_conds = []
-                            for c_idx, col in enumerate(pk_columns):
-                                p_name = f"pk_{idx}_{c_idx}"
-                                sub_conds.append(f"{_quote_ident(col)} = :{p_name}")
-                                params[p_name] = tup_vals[c_idx] if c_idx < len(tup_vals) else None
-                            conds.append(f"({' AND '.join(sub_conds)})")
+        if missing_pks:
+            quoted_table = _quote_ident(table_name)
+            quoted_fks = ", ".join(_quote_ident(fk) for fk in fk_columns)
+            is_composite = len(pk_columns) > 1
 
-                        where_clause = " OR ".join(conds)
-                        stmt = sa.text(
-                            f"SELECT {quoted_pks}, {quoted_fks} FROM {quoted_table} WHERE {where_clause}"
-                        )
-                        exec_res = conn.execute(stmt, params)
-                        for row in exec_res.mappings():
-                            key_tuple = tuple(row[c] for c in pk_columns)
-                            results[key_tuple] = {fk: row[fk] for fk in fk_columns}
-                    else:
-                        primary_key_col = pk_columns[0] if pk_columns else "id"
-                        quoted_pk = _quote_ident(primary_key_col)
-                        param_names = [f"pk_{j}" for j in range(len(batch))]
-                        in_clause = ", ".join(f":{p}" for p in param_names)
-                        stmt = sa.text(
-                            f"SELECT {quoted_pk}, {quoted_fks} FROM {quoted_table} WHERE {quoted_pk} IN ({in_clause})"
-                        )
-                        params = dict(zip(param_names, batch))
-                        exec_res = conn.execute(stmt, params)
-                        for row in exec_res.mappings():
-                            r_pk = row[primary_key_col]
-                            results[r_pk] = {fk: row[fk] for fk in fk_columns}
-        except Exception as exc:
-            logger.error(
-                "Database error while batch querying FKs on table '%s': %s",
-                table_name, exc,
-            )
-            from safeslicesql.types import DatabaseResolutionError
-            raise DatabaseResolutionError(
-                f"Failed to query foreign keys on table '{table_name}': {exc}"
-            ) from exc
+            # Chunk large lists of PKs (500 per query) to avoid parameter limits
+            chunk_size = 500
+            try:
+                with engine.connect() as conn:
+                    for i in range(0, len(missing_pks), chunk_size):
+                        batch = missing_pks[i : i + chunk_size]
 
-        # Fill in missing PKs with None
-        for pk in pk_values:
-            if pk not in results:
-                results[pk] = {fk: None for fk in fk_columns}
+                        if is_composite:
+                            quoted_pks = ", ".join(_quote_ident(c) for c in pk_columns)
+                            conds = []
+                            params = {}
+                            for idx, pk_tup in enumerate(batch):
+                                tup_vals = pk_tup if isinstance(pk_tup, (tuple, list)) else (pk_tup,)
+                                sub_conds = []
+                                for c_idx, col in enumerate(pk_columns):
+                                    p_name = f"pk_{idx}_{c_idx}"
+                                    sub_conds.append(f"{_quote_ident(col)} = :{p_name}")
+                                    params[p_name] = tup_vals[c_idx] if c_idx < len(tup_vals) else None
+                                conds.append(f"({' AND '.join(sub_conds)})")
 
-        return results
+                            where_clause = " OR ".join(conds)
+                            stmt = sa.text(
+                                f"SELECT {quoted_pks}, {quoted_fks} FROM {quoted_table} WHERE {where_clause}"
+                            )
+                            exec_res = conn.execute(stmt, params)
+                            for row in exec_res.mappings():
+                                key_tuple = tuple(row[c] for c in pk_columns)
+                                tbl_cache[key_tuple] = {fk: row[fk] for fk in fk_columns}
+                        else:
+                            primary_key_col = pk_columns[0] if pk_columns else "id"
+                            quoted_pk = _quote_ident(primary_key_col)
+                            param_names = [f"pk_{j}" for j in range(len(batch))]
+                            in_clause = ", ".join(f":{p}" for p in param_names)
+                            stmt = sa.text(
+                                f"SELECT {quoted_pk}, {quoted_fks} FROM {quoted_table} WHERE {quoted_pk} IN ({in_clause})"
+                            )
+                            params = dict(zip(param_names, batch))
+                            exec_res = conn.execute(stmt, params)
+                            for row in exec_res.mappings():
+                                r_pk = row[primary_key_col]
+                                tbl_cache[r_pk] = {fk: row[fk] for fk in fk_columns}
 
-    return {pk: {fk: None for fk in fk_columns} for pk in pk_values}
+                # Mark missing PKs that do not exist in the DB
+                for pk in missing_pks:
+                    if pk not in tbl_cache:
+                        tbl_cache[pk] = {fk: None for fk in fk_columns}
+
+            except Exception as exc:
+                logger.error(
+                    "Database error while batch querying FKs on table '%s': %s",
+                    table_name, exc,
+                )
+                from safeslicesql.types import DatabaseResolutionError
+                raise DatabaseResolutionError(
+                    f"Failed to query foreign keys on table '{table_name}': {exc}"
+                ) from exc
+
+        return {pk: tbl_cache.get(pk, {fk: None for fk in fk_columns}) for pk in pk_values}
 
 
 def _resolve_fk_value(

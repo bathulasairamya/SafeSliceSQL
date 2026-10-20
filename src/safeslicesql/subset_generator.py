@@ -13,6 +13,7 @@ Owner: M1
 
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import Any
 
@@ -218,6 +219,21 @@ def materialize_subset(
                     row_dicts = [dict(r) for r in res.mappings().all()]
 
                     if row_dicts:
+                        # Convert date/datetime strings to python date objects for databases like SQLite
+                        date_cols = {c.name for c in target_table.columns if isinstance(c.type, (sa.Date, sa.DateTime))}
+                        if date_cols:
+                            for row in row_dicts:
+                                for col in date_cols:
+                                    val = row.get(col)
+                                    if isinstance(val, str):
+                                        try:
+                                            if len(val) == 10:
+                                                row[col] = datetime.date.fromisoformat(val)
+                                            elif len(val) >= 19:
+                                                row[col] = datetime.datetime.fromisoformat(val.replace(" ", "T"))
+                                        except ValueError:
+                                            pass
+
                         t_conn.execute(sa.insert(target_table), row_dicts)
                         inserted_for_table += len(row_dicts)
 

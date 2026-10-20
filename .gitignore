@@ -39,4 +39,6 @@ coverage.xml
 # Runtime outputs
 logs/
 results/
+*.db
+data/
 

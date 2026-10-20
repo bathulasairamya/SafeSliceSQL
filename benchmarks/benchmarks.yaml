@@ -5,6 +5,11 @@ benchmark:
   name: "safeslicesql_eval"
   description: "Comparative benchmark across random-repair, referential, and workload-aware sampling."
 
+database:
+  source_url: "sqlite:///data/employees_source.db"
+  target_url: "sqlite:///data/employees_target.db"
+  target_database_name: "employees_target"
+
 matrix:
   methods:
     - "random-repair"

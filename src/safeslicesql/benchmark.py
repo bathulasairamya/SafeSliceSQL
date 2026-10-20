@@ -67,6 +67,11 @@ def load_benchmark_config(config_path: str | Path) -> dict[str, Any]:
     summary_dir = output.get("summary_dir", "results/summaries")
     plots_dir = output.get("plots_dir", "results/plots")
 
+    db_cfg = data.get("database", {})
+    source_url = db_cfg.get("source_url")
+    target_url = db_cfg.get("target_url")
+    target_database_name = db_cfg.get("target_database_name")
+
     return {
         "methods": methods,
         "budget_percents": budget_percents,
@@ -75,6 +80,9 @@ def load_benchmark_config(config_path: str | Path) -> dict[str, Any]:
         "raw_dir": raw_dir,
         "summary_dir": summary_dir,
         "plots_dir": plots_dir,
+        "source_url": source_url,
+        "target_url": target_url,
+        "target_database_name": target_database_name,
     }
 
 
@@ -108,6 +116,10 @@ def run_benchmark(
     raw_dir = Path(cfg["raw_dir"])
     summary_dir = Path(cfg["summary_dir"])
     plots_dir = Path(cfg["plots_dir"])
+    source_url = cfg.get("source_url")
+    target_url = cfg.get("target_url")
+    if target_database_name is None:
+        target_database_name = cfg.get("target_database_name")
 
     raw_dir.mkdir(parents=True, exist_ok=True)
     summary_dir.mkdir(parents=True, exist_ok=True)
@@ -117,13 +129,21 @@ def run_benchmark(
     created_engines = False
     if source_engine is None or target_engine is None:
         created_engines = True
-        app_cfg = load_config()
-        if source_engine is None:
-            source_engine = get_source_engine(app_cfg)
-        if target_engine is None:
-            target_engine = get_target_engine(app_cfg)
-        if target_database_name is None:
-            target_database_name = app_cfg.target_db.database
+        if source_url and target_url:
+            if source_engine is None:
+                source_engine = sa.create_engine(source_url)
+            if target_engine is None:
+                target_engine = sa.create_engine(target_url)
+            if target_database_name is None:
+                target_database_name = "employees_target"
+        else:
+            app_cfg = load_config()
+            if source_engine is None:
+                source_engine = get_source_engine(app_cfg)
+            if target_engine is None:
+                target_engine = get_target_engine(app_cfg)
+            if target_database_name is None:
+                target_database_name = app_cfg.target_db.database
 
     if target_database_name is None:
         target_database_name = "safeslicesql_target"
