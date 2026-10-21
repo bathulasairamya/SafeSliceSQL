@@ -29,9 +29,17 @@ def _get_safeslice_cmd() -> list[str]:
     return [sys.executable, "-m", "safeslicesql.cli"]
 
 
+def _clean_ansi(text: str) -> str:
+    """Strip ANSI escape sequences."""
+    import re
+
+    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
+
+
 def _get_env_with_pythonpath() -> dict[str, str]:
     """Return environment dictionary with src/ directory included in PYTHONPATH."""
     import os
+
     env = dict(os.environ)
     src_dir = str(Path(__file__).resolve().parent.parent / "src")
     existing_pp = env.get("PYTHONPATH", "")
@@ -176,7 +184,8 @@ class TestCLI:
         assert result.returncode == 0, (
             f"safeslice --help failed with exit code {result.returncode}. stderr: {result.stderr}"
         )
-        assert "safeslice" in result.stdout.lower() or "SafeSliceSQL" in result.stdout, (
+        clean_out = _clean_ansi(result.stdout)
+        assert "safeslice" in clean_out.lower() or "SafeSliceSQL" in clean_out, (
             f"CLI help output does not mention safeslice: {result.stdout}"
         )
 
@@ -192,7 +201,7 @@ class TestCLI:
             timeout=30,
         )
         assert result.returncode == 0
-        assert "database" in result.stdout.lower()
+        assert "database" in _clean_ansi(result.stdout).lower()
 
     def test_cli_run_help(self):
         """run subcommand is registered."""
@@ -206,7 +215,7 @@ class TestCLI:
             timeout=30,
         )
         assert result.returncode == 0
-        assert "method" in result.stdout.lower()
+        assert "method" in _clean_ansi(result.stdout).lower()
 
     def test_cli_validate_help(self):
         """validate subcommand is registered."""

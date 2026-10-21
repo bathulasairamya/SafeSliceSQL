@@ -10,8 +10,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
     - uses: actions/checkout@v4
@@ -27,8 +28,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install -e .
-        pip install ruff
-        pip install -e .
 
     - name: Lint with ruff
       run: |
@@ -36,4 +35,4 @@ jobs:
 
     - name: Run pytest test suite
       run: |
-        pytest -v -m "not db"
+        pytest -v -m "not db" --tb=short
