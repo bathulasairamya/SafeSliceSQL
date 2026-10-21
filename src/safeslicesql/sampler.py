@@ -15,6 +15,7 @@ Owner: M2
 from __future__ import annotations
 
 import logging
+import math
 import random
 from typing import Any
 
@@ -24,7 +25,9 @@ from sqlalchemy import Engine
 from safeslicesql.dependency_graph import (
     DependencyGraph,
     build_dependency_graph,
+    clear_fk_cache,
     compute_closure,
+    prime_foreign_key_cache,
 )
 from safeslicesql.types import SchemaMetadata, SelectionResult
 from safeslicesql.workload_analyzer import WorkloadAnalysis
@@ -33,6 +36,8 @@ logger = logging.getLogger("safeslicesql.sampler")
 
 # Valid method identifiers
 METHODS = ("random-repair", "referential", "workload-aware")
+CANDIDATE_POOL_MULTIPLIER = 1.25
+SELECTION_LOG_LIMIT = 1000
 
 
 def _ensure_graph(
@@ -104,6 +109,151 @@ def _all_primary_keys_for_table(
 def _selection_total(selected_rows: dict[str, set[Any] | list[Any]]) -> int:
     """Return the number of rows currently selected."""
     return sum(len(values) for values in selected_rows.values())
+
+
+def _sample_primary_keys(
+    schema: SchemaMetadata,
+    table_name: str,
+    engine: Engine | dict[str, Any] | None,
+    sample_size: int,
+    rng: random.Random,
+) -> list[Any]:
+    """Select a reproducible, bounded reservoir of primary keys from a table."""
+    if sample_size <= 0:
+        return []
+    if isinstance(engine, dict) or engine is None or not hasattr(engine, "connect"):
+        keys = _all_primary_keys_for_table(schema, table_name, engine)
+        if len(keys) <= sample_size:
+            return keys
+        return rng.sample(keys, sample_size)
+
+    table_meta = schema.tables[table_name]
+    pk_columns = table_meta.effective_primary_keys or ["id"]
+    quoted_table = f"`{table_name.replace('`', '``')}`"
+    quoted_columns = ", ".join(f"`{column.replace('`', '``')}`" for column in pk_columns)
+    statement = sa.text(f"SELECT {quoted_columns} FROM {quoted_table}")
+    reservoir: list[Any] = []
+
+    with engine.connect() as conn:
+        result = conn.execution_options(stream_results=True).execute(statement).mappings()
+        for row_index, row in enumerate(result):
+            key = (
+                tuple(row[column] for column in pk_columns)
+                if len(pk_columns) > 1
+                else row[pk_columns[0]]
+            )
+            if row_index < sample_size:
+                reservoir.append(key)
+            else:
+                replacement = rng.randrange(row_index + 1)
+                if replacement < sample_size:
+                    reservoir[replacement] = key
+            if row_index > 0 and row_index % 500_000 == 0:
+                logger.info(
+                    "Scanned %d rows from '%s' while sampling primary keys",
+                    row_index,
+                    table_name,
+                )
+        result.close()
+
+    logger.info(
+        "Sampled %d candidate keys from '%s'",
+        len(reservoir),
+        table_name,
+    )
+    return reservoir
+
+
+def _candidate_rows_by_table(
+    schema: SchemaMetadata,
+    engine: Engine | dict[str, Any] | None,
+    budget: int,
+    seed: int,
+) -> dict[str, list[Any]]:
+    """Build a seeded candidate pool capped near the requested row budget."""
+    rng = random.Random(seed)
+    row_counts: dict[str, int] = {}
+
+    for table_name in schema.table_names:
+        if isinstance(engine, dict):
+            table_data = engine.get(table_name, {})
+            row_counts[table_name] = len(table_data) if isinstance(table_data, (dict, list)) else 0
+        elif engine is not None and hasattr(engine, "connect"):
+            quoted_table = f"`{table_name.replace('`', '``')}`"
+            with engine.connect() as conn:
+                count = conn.execute(sa.text(f"SELECT COUNT(*) FROM {quoted_table}")).scalar()
+            row_counts[table_name] = int(count or 0)
+        else:
+            row_counts[table_name] = max(0, schema.tables[table_name].row_count)
+
+    total_rows = sum(row_counts.values())
+    if total_rows == 0 or budget <= 0:
+        return {table_name: [] for table_name in schema.table_names}
+
+    pool_size = min(
+        total_rows,
+        max(budget, math.ceil(budget * CANDIDATE_POOL_MULTIPLIER)),
+    )
+    candidate_rows: dict[str, list[Any]] = {}
+    for table_name in schema.table_names:
+        table_rows = row_counts[table_name]
+        if table_rows == 0:
+            candidate_rows[table_name] = []
+            continue
+        sample_size = min(
+            table_rows,
+            max(1, math.ceil(pool_size * table_rows / total_rows)),
+        )
+        candidate_rows[table_name] = _sample_primary_keys(
+            schema,
+            table_name,
+            engine,
+            sample_size,
+            rng,
+        )
+
+    return candidate_rows
+
+
+def _candidate_closure(
+    graph: DependencyGraph,
+    engine: Engine | dict[str, Any] | None,
+    table_name: str,
+    pk_value: Any,
+) -> dict[str, set[Any]]:
+    """Compute the dependency closure for one candidate, independent of selected rows."""
+    closure = compute_closure(
+        graph,
+        {table_name: {pk_value}},
+        engine=engine,
+    )
+    return closure.selected_rows
+
+
+def _incremental_row_cost(
+    selected: dict[str, set[Any]],
+    candidate_closure: dict[str, set[Any]],
+) -> int:
+    """Count rows in a candidate closure that are not already selected."""
+    return sum(
+        len(rows - selected.get(table_name, set()))
+        for table_name, rows in candidate_closure.items()
+    )
+
+
+def _merge_closure(
+    selected: dict[str, set[Any]],
+    candidate_closure: dict[str, set[Any]],
+) -> None:
+    """Merge a candidate's already-computed transitive closure into the selection."""
+    for table_name, rows in candidate_closure.items():
+        selected.setdefault(table_name, set()).update(rows)
+
+
+def _record_decision(selection_log: list[str], message: str) -> None:
+    """Bound the in-memory decision log for large selections."""
+    if len(selection_log) < SELECTION_LOG_LIMIT:
+        selection_log.append(message)
 
 
 def _finalize_selection(
@@ -182,13 +332,24 @@ def select_rows(
     if method not in METHODS:
         raise ValueError(f"Unknown method '{method}'. Supported methods: {', '.join(METHODS)}")
 
-    graph = _ensure_graph(schema, graph)
+    composite_fk_features = [
+        feature
+        for feature in schema.unsupported_features
+        if "composite foreign key" in feature.lower()
+    ]
+    if composite_fk_features:
+        raise ValueError(
+            "Selection does not support composite foreign keys: "
+            + "; ".join(composite_fk_features)
+        )
 
-    if method == "random-repair":
-        return _select_random_repair(schema, graph, engine, budget, seed)
-    elif method == "referential":
-        return _select_referential(schema, graph, engine, budget, seed)
-    else:
+    graph = _ensure_graph(schema, graph)
+    clear_fk_cache()
+    try:
+        if method == "random-repair":
+            return _select_random_repair(schema, graph, engine, budget, seed)
+        elif method == "referential":
+            return _select_referential(schema, graph, engine, budget, seed)
         return _select_workload_aware(
             schema,
             workload,
@@ -197,6 +358,8 @@ def select_rows(
             budget,
             seed,
         )
+    finally:
+        clear_fk_cache()
 
 
 def _select_random_repair(
@@ -219,10 +382,13 @@ def _select_random_repair(
     rejected_candidates = 0
     total_closure_additions = 0
 
-    candidate_pairs: list[tuple[str, Any]] = []
-    for table_name in schema.table_names:
-        for pk_value in _all_primary_keys_for_table(schema, table_name, engine):
-            candidate_pairs.append((table_name, pk_value))
+    candidate_rows = _candidate_rows_by_table(schema, engine, budget, seed)
+    prime_foreign_key_cache(graph, engine, candidate_rows)
+    candidate_pairs = [
+        (table_name, pk_value)
+        for table_name in schema.table_names
+        for pk_value in candidate_rows[table_name]
+    ]
 
     if not candidate_pairs:
         return SelectionResult(
@@ -239,28 +405,35 @@ def _select_random_repair(
     rng = random.Random(seed)
     rng.shuffle(candidate_pairs)
 
-    for table_name, pk_value in candidate_pairs:
-        prev_total = _selection_total(selected)
-        trial = {table: set(values) for table, values in selected.items()}
-        trial.setdefault(table_name, set()).add(pk_value)
-        closure = compute_closure(graph, trial, engine=engine, budget=budget)
-
-        if closure.is_feasible:
-            selected = {table: set(values) for table, values in closure.selected_rows.items()}
-            new_total = _selection_total(selected)
-            total_closure_additions += max(0, new_total - prev_total - 1)
-            selection_log.append(
-                f"Accepted {table_name}.{pk_value}: "
-                f"closure={new_total} rows (+{new_total - prev_total})"
-            )
-            if new_total >= budget:
-                break
+    for candidate_index, (table_name, pk_value) in enumerate(candidate_pairs, start=1):
+        if pk_value in selected.get(table_name, set()):
             continue
-
-        rejected_candidates += 1
-        selection_log.append(
-            f"Rejected {table_name}.{pk_value}: {closure.infeasibility_reason or 'closure exceeds budget'}"
-        )
+        closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
+        additional_rows = _incremental_row_cost(selected, closure_rows)
+        if _selection_total(selected) + additional_rows <= budget:
+            _merge_closure(selected, closure_rows)
+            total_closure_additions += max(0, additional_rows - 1)
+            _record_decision(
+                selection_log,
+                f"Accepted {table_name}.{pk_value}: +{additional_rows} rows, "
+                f"total={_selection_total(selected)}",
+            )
+            if _selection_total(selected) >= budget:
+                break
+        else:
+            rejected_candidates += 1
+            _record_decision(
+                selection_log,
+                f"Rejected {table_name}.{pk_value}: closure exceeds budget",
+            )
+        if candidate_index % 100_000 == 0:
+            logger.info(
+                "Random-repair evaluated %d/%d candidates; selected %d/%d budget rows",
+                candidate_index,
+                len(candidate_pairs),
+                _selection_total(selected),
+                budget,
+            )
 
     return SelectionResult(
         method="random-repair",
@@ -304,32 +477,42 @@ def _select_referential(
     rejected_candidates = 0
     total_closure_additions = 0
     rng = random.Random(seed)
+    candidate_rows = _candidate_rows_by_table(schema, engine, budget, seed)
+    prime_foreign_key_cache(graph, engine, candidate_rows)
 
     for table_name in table_order:
-        pk_values = _all_primary_keys_for_table(schema, table_name, engine)
+        pk_values = candidate_rows.get(table_name, [])
         rng.shuffle(pk_values)
-        for pk_value in pk_values:
-            prev_total = _selection_total(selected)
-            trial = {table: set(values) for table, values in selected.items()}
-            trial.setdefault(table_name, set()).add(pk_value)
-            closure = compute_closure(graph, trial, engine=engine, budget=budget)
-
-            if closure.is_feasible:
-                selected = {table: set(values) for table, values in closure.selected_rows.items()}
-                new_total = _selection_total(selected)
-                total_closure_additions += max(0, new_total - prev_total - 1)
-                selection_log.append(
-                    f"Added {table_name}.{pk_value}: "
-                    f"closure={new_total} rows (+{new_total - prev_total})"
-                )
-                if new_total >= budget:
-                    break
+        for candidate_index, pk_value in enumerate(pk_values, start=1):
+            if pk_value in selected.get(table_name, set()):
                 continue
-
-            rejected_candidates += 1
-            selection_log.append(
-                f"Skipped {table_name}.{pk_value}: {closure.infeasibility_reason or 'closure exceeds budget'}"
-            )
+            closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
+            additional_rows = _incremental_row_cost(selected, closure_rows)
+            if _selection_total(selected) + additional_rows <= budget:
+                _merge_closure(selected, closure_rows)
+                total_closure_additions += max(0, additional_rows - 1)
+                _record_decision(
+                    selection_log,
+                    f"Added {table_name}.{pk_value}: +{additional_rows} rows, "
+                    f"total={_selection_total(selected)}",
+                )
+                if _selection_total(selected) >= budget:
+                    break
+            else:
+                rejected_candidates += 1
+                _record_decision(
+                    selection_log,
+                    f"Skipped {table_name}.{pk_value}: closure exceeds budget",
+                )
+            if candidate_index % 100_000 == 0:
+                logger.info(
+                    "Referential selection evaluated %d candidates in '%s'; "
+                    "selected %d/%d budget rows",
+                    candidate_index,
+                    table_name,
+                    _selection_total(selected),
+                    budget,
+                )
 
         if _selection_total(selected) >= budget:
             break
@@ -395,89 +578,65 @@ def _select_workload_aware(
     if not table_weights:
         table_weights = {table_name: 1.0 for table_name in schema.table_names}
 
-    # Pre-fetch candidate primary keys once to avoid repeated DB queries in loop
-    cached_pks: dict[str, list[Any]] = {}
-    for table_name in schema.table_names:
-        cached_pks[table_name] = _all_primary_keys_for_table(schema, table_name, engine)
-
-    # Order tables by workload weight (highest weight first)
-    sorted_tables = sorted(
-        schema.table_names,
-        key=lambda t: (-table_weights.get(t, 0.0), t),
-    )
-
-    # Build candidate pool ordered by table weight, shuffled within tables
+    candidate_rows = _candidate_rows_by_table(schema, engine, budget, seed)
+    prime_foreign_key_cache(graph, engine, candidate_rows)
     rng = random.Random(seed)
-    remaining: list[tuple[str, Any]] = []
-    for table_name in sorted_tables:
-        pks = list(cached_pks.get(table_name, []))
-        rng.shuffle(pks)
-        for pk in pks:
-            remaining.append((table_name, pk))
+    scored_candidates: list[tuple[float, str, Any]] = []
+    for table_name, pk_values in candidate_rows.items():
+        workload_value = table_weights.get(table_name, 1.0)
+        for candidate_index, pk_value in enumerate(pk_values, start=1):
+            closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
+            dependency_cost = sum(len(rows) for rows in closure_rows.values())
+            score = workload_value / max(1, dependency_cost)
+            scored_candidates.append((score, table_name, pk_value))
+            if candidate_index % 100_000 == 0:
+                logger.info(
+                    "Workload-aware scored %d candidates in '%s'",
+                    candidate_index,
+                    table_name,
+                )
+    rng.shuffle(scored_candidates)
+    scored_candidates.sort(key=lambda candidate: candidate[0], reverse=True)
+    candidate_rows.clear()
 
-    # Windowed greedy selection: evaluate batches of candidates and pick
-    # the highest-scoring feasible one each round. This faithfully implements
-    # the greedy heuristic: score(c|S) = ΔV(c|S) / max(1, ΔD(c|S)).
+    # Rank candidates by their workload value per standalone closure cost.
+    # During selection, recalculate the incremental cost against selected rows.
     rejected_candidates = 0
     total_closure_additions = 0
-    greedy_window = 50
-
-    while remaining and _selection_total(selected) < budget:
-        window = remaining[:greedy_window]
-        if not window:
+    for candidate_index, (score, table_name, pk_value) in enumerate(
+        scored_candidates,
+        start=1,
+    ):
+        if _selection_total(selected) >= budget:
             break
-
-        current_total = _selection_total(selected)
-        best_score = -1.0
-        best_entry: tuple | None = None
-        indices_to_remove: set[int] = set()
-
-        for i, (table_name, pk_value) in enumerate(window):
-            if pk_value in selected.get(table_name, set()):
-                indices_to_remove.add(i)
-                continue
-
-            trial = {tbl: set(values) for tbl, values in selected.items()}
-            trial.setdefault(table_name, set()).add(pk_value)
-            closure = compute_closure(graph, trial, engine=engine, budget=budget)
-
-            if not closure.is_feasible:
-                rejected_candidates += 1
-                indices_to_remove.add(i)
-                selection_log.append(
-                    f"Skipped {table_name}.{pk_value}: "
-                    f"{closure.infeasibility_reason or 'budget exceeded'}"
-                )
-                continue
-
-            additional_rows = max(1, closure.total_rows - current_total)
-            score = table_weights.get(table_name, 1.0) / additional_rows
-
-            if score > best_score:
-                best_score = score
-                best_entry = (i, table_name, pk_value, closure.selected_rows)
-
-        if best_entry is not None:
-            idx, table_name, pk_value, closure_rows = best_entry
-            selected = {tbl: set(values) for tbl, values in closure_rows.items()}
-            new_total = _selection_total(selected)
-            additions = max(0, new_total - current_total - 1)
-            total_closure_additions += additions
-            selection_log.append(
-                f"Selected {table_name}.{pk_value}: score={best_score:.3f}, "
-                f"deps=+{additions}, total_rows={new_total}"
+        if pk_value in selected.get(table_name, set()):
+            continue
+        closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
+        additional_rows = _incremental_row_cost(selected, closure_rows)
+        if additional_rows == 0:
+            continue
+        if _selection_total(selected) + additional_rows <= budget:
+            _merge_closure(selected, closure_rows)
+            total_closure_additions += max(0, additional_rows - 1)
+            _record_decision(
+                selection_log,
+                f"Selected {table_name}.{pk_value}: score={score:.3f}, "
+                f"added={additional_rows}, total_rows={_selection_total(selected)}",
             )
-            indices_to_remove.add(idx)
-
-        # Remove processed candidates from remaining
-        remaining = [
-            item
-            for j, item in enumerate(remaining)
-            if j >= len(window) or j not in indices_to_remove
-        ]
-
-        if best_entry is None and not indices_to_remove:
-            break  # No progress possible
+        else:
+            rejected_candidates += 1
+            _record_decision(
+                selection_log,
+                f"Skipped {table_name}.{pk_value}: closure exceeds budget",
+            )
+        if candidate_index % 100_000 == 0:
+            logger.info(
+                "Workload-aware evaluated %d/%d scored candidates; selected %d/%d budget rows",
+                candidate_index,
+                len(scored_candidates),
+                _selection_total(selected),
+                budget,
+            )
 
     return SelectionResult(
         method="workload-aware",

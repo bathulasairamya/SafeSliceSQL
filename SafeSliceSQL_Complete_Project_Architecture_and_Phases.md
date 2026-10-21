@@ -8,7 +8,7 @@ The project is organized by **phases and exit criteria**, not by weeks or fixed 
 **Tasks**
 - Create the `SafeSliceSQL` repository and the package structure.
 - Set up Python, MySQL, the virtual environment, dependencies, `.env.example`, and `.gitignore`.
-- Select the initial supported scope: MySQL/InnoDB, single-column primary and foreign keys, and an explicitly documented policy for nullable foreign keys.
+- Select the initial supported scope: MySQL/InnoDB, single-column or composite primary keys, single-column foreign keys, and an explicitly documented policy for nullable foreign keys.
 - Define the workload SQL file, configuration format, logging conventions, and module interfaces.
 - Load the Employees sample database and confirm the team can connect to it.
 
@@ -27,7 +27,7 @@ The project is organized by **phases and exit criteria**, not by weeks or fixed 
 - Introspect tables, columns, primary keys, foreign keys, nullability, and row counts.
 - Build a directed dependency graph, consistently using referenced parent → referencing child edges.
 - Implement recursive dependency closure: selected child rows bring in required referenced parent rows.
-- Detect unsupported composite keys, cycles, and schema features outside the supported scope; report them clearly rather than silently mishandling them.
+- Detect unsupported composite foreign keys, cycles, and schema features outside the supported scope; report them clearly rather than silently mishandling them.
 - Add unit tests for graph construction and closure.
 
 **Deliverables**
@@ -398,10 +398,10 @@ table to referencing child table, while documenting this direction
 consistently. For a selected child row, the engine must find the parent
 row it references.
 
-The initial version supports single-column primary/foreign keys and
-acyclic foreign-key graphs. Nullable foreign-key behavior is defined
-explicitly. Composite keys and cycles are detected and reported as
-unsupported until implemented and tested.
+The current version supports single-column and composite primary keys,
+single-column foreign keys, and acyclic foreign-key graphs. Nullable
+foreign-key behavior is defined explicitly. Composite foreign keys and
+cycles are detected and reported as unsupported.
 
 ### Step 5 --- Generate candidate selections
 
@@ -609,10 +609,10 @@ exceeding the hard row budget.
 
 The first version uses:
 
--   Single-column primary and foreign keys.
+-   Single-column and composite primary keys, with single-column foreign keys.
 -   Acyclic foreign-key graph.
 -   Explicit nullable-FK policy.
--   Clear rejection of unsupported composite keys or cycles.
+-   Clear rejection of unsupported composite foreign keys or cycles.
 
 ### 9.2 Baseline A: Random sampling with repair
 
@@ -1007,7 +1007,7 @@ implementations.
 -   Empty table.
 -   Query with empty source result.
 -   Candidate whose closure exceeds the budget.
--   Unsupported composite key.
+-   Unsupported composite foreign key.
 -   Foreign-key cycle.
 -   Unsupported SQL query.
 -   Database connection failure.
@@ -1098,7 +1098,7 @@ performance claim.
 5.  How is marginal workload value calculated?
 6.  How do joins, filters, and aggregates affect candidate scoring?
 7.  How are empty source query results handled?
-8.  How do you handle nullable FKs, composite keys, and cycles?
+8.  How do you handle nullable FKs, composite primary keys, composite foreign keys, and cycles?
 9.  How are baseline methods made fair?
 10. What happens if the workload changes?
 11. What guarantees are formal and which are empirical?

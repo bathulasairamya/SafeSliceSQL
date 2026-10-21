@@ -56,19 +56,18 @@ flowchart TD
 
 ## Supported Scope
 
-SafeSliceSQL v1 supports:
+SafeSliceSQL currently supports:
 
 - MySQL 8.x with InnoDB
-- Single-column primary keys
+- Single-column and composite primary keys
 - Single-column foreign keys in acyclic graphs
 - Nullable foreign keys treated as "no dependency"
 - SELECT workloads with WHERE, JOIN, GROUP BY, and basic aggregates
 - Fixed workload files and reproducible seeds
 - Hard row budgets
 
-Unsupported in v1:
+Current limitations:
 
-- Composite primary keys
 - Composite foreign keys
 - Cyclic foreign-key graphs
 - OUTER JOINs
@@ -102,23 +101,87 @@ Unsupported in v1:
 
 ## Installation
 
-Clone the project and install dependencies from the root directory:
+### Windows setup
 
-```bash
-pip install -r requirements.txt
+Run these commands from the repository root in Command Prompt:
+
+```cmd
+py -3.13 -m venv .venv
+call .venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
+if not exist .env copy .env.example .env
+notepad .env
 ```
 
-For local development and testing, the same requirements file includes the dev tooling as well.
+The `requirements.txt` file includes both application dependencies and test/lint tools. SQLAlchemy is installed by the `sqlalchemy` package; `python-dotenv` provides `from dotenv import load_dotenv`.
+
+### Configure MySQL
+
+Edit the local `.env` file. Set the host, port, username, password, and database names to match your MySQL installation. The source and target must be different databases:
+
+```dotenv
+SAFESLICE_SOURCE_HOST=localhost
+SAFESLICE_SOURCE_PORT=3306
+SAFESLICE_SOURCE_USER=root
+SAFESLICE_SOURCE_PASSWORD=your_local_mysql_password
+SAFESLICE_SOURCE_DATABASE=employees
+
+SAFESLICE_TARGET_HOST=localhost
+SAFESLICE_TARGET_PORT=3306
+SAFESLICE_TARGET_USER=root
+SAFESLICE_TARGET_PASSWORD=your_local_mysql_password
+SAFESLICE_TARGET_DATABASE=employees_slice
+
+SAFESLICE_LOG_LEVEL=INFO
+SAFESLICE_LOG_DIR=logs
+```
+
+Use your own credentials in `.env`; do not put real passwords in source files or commit `.env`. The source account should have read access. The target account needs permission to create and replace tables and insert selected rows. If a password contains `#` or whitespace, quote its value in `.env`.
+
+Create the source database by loading a MySQL sample database if it is not already present. SafeSliceSQL does not download or load the Employees sample dataset for you. Verify it and create the target database in MySQL:
+
+```cmd
+mysql -h localhost -P 3306 -u root -p
+```
+
+At the MySQL prompt:
+
+```sql
+SHOW DATABASES;
+CREATE DATABASE IF NOT EXISTS employees_random_slice;
+CREATE DATABASE IF NOT EXISTS employees_referential_slice;
+CREATE DATABASE IF NOT EXISTS employees_workload_slice;
+CREATE DATABASE IF NOT EXISTS employees_benchmark_slice;
+EXIT;
+```
+
+Set `SAFESLICE_TARGET_DATABASE` to the target you intend to use, or pass a target with `--target`. The `run` command tests the target connection before materialization, so each target database must exist and be accessible before starting a run. The benchmark uses the target database configured in `.env` unless explicit database URLs are supplied.
+
+### Verify the connection
+
+With `.venv` activated and `.env` configured, inspect the source database:
+
+```cmd
+python -m safeslicesql.cli inspect --database employees
+```
+
+This checks the source connection and prints the discovered tables, primary keys, foreign-key relationships, and dependency order. It does not create or modify the target database. `python -m safeslicesql.cli` runs the package from the active environment; the installed `safeslice` command is also available after `pip install -e .`.
 
 ## Example Commands
 
 ```bash
-safeslice inspect --database employees_source
-safeslice run --method random-repair --budget-percent 20 --seed 42
-safeslice run --method referential --budget-percent 20 --seed 42
-safeslice run --method workload-aware --budget-percent 20 --seed 42
-safeslice validate --source employees_source --target employees_slice
+python -m safeslicesql.cli inspect --database employees
+python -m safeslicesql.cli run --method random-repair --budget-percent 20 --seed 42 --source employees --target employees_random_slice --output-dir results\random-repair
+python -m safeslicesql.cli run --method referential --budget-percent 20 --seed 42 --source employees --target employees_referential_slice --output-dir results\referential
+python -m safeslicesql.cli run --method workload-aware --budget-percent 20 --seed 42 --source employees --target employees_workload_slice --output-dir results\workload-aware
+python -m safeslicesql.cli validate --source employees --target employees_random_slice
 ```
+
+Create each target database in MySQL before running its corresponding method. Materialization recreates tables in the specified target, so use a dedicated target database for each method. Run output directories are created automatically and contain CSV run metrics; they are not SQL database dumps. To export a target database as a SQL dump, use MySQL's `mysqldump` command separately.
+
+The Employees sample contains composite primary keys. These are supported and represented internally as tuples in primary-key column order. Composite foreign keys and cyclic foreign-key graphs remain unsupported. Candidate selection scans source primary keys to build a seeded reservoir, so even a small row budget can take time on multi-million-row databases.
 
 ## Workload Model
 
@@ -192,6 +255,14 @@ The project includes a benchmark path for comparing selection methods across:
 - method variants
 
 Benchmark results are stored in a structured form for later analysis and comparison.
+
+The checked-in `benchmarks/benchmarks.yaml` is configured with SQLite example URLs. For MySQL, use a copy of the YAML with its SQLite `database:` URLs removed so the benchmark uses the source and target settings from `.env`. Set its output paths to locations under `results/`, then run:
+
+```cmd
+python -m safeslicesql.cli benchmark --config benchmarks\benchmarks_mysql.yaml
+```
+
+The benchmark reuses and recreates tables in its configured target database across experiments. Its raw run CSVs, summary CSV/Markdown files, and plots are written to the configured raw, summary, and plot directories.
 
 ## Repository Layout
 

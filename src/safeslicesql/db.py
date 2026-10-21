@@ -120,11 +120,24 @@ def test_connection(engine: sa.Engine) -> bool:
         logger.info("Connection test passed for %s", engine.url.database)
         return True
     except Exception as exc:
-        logger.error(
-            "Connection test FAILED for %s: %s",
-            engine.url.database,
-            exc,
-        )
+        original_error = getattr(exc, "orig", None)
+        error_code = None
+        if original_error is not None:
+            args = getattr(original_error, "args", ())
+            if args and isinstance(args[0], int):
+                error_code = args[0]
+        if error_code is not None:
+            logger.error(
+                "Connection test FAILED for %s (database error code %s)",
+                engine.url.database,
+                error_code,
+            )
+        else:
+            logger.error(
+                "Connection test FAILED for %s (%s)",
+                engine.url.database,
+                type(exc).__name__,
+            )
         return False
 
 

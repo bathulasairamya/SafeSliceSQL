@@ -4,9 +4,9 @@ Tests for safeslicesql.schema_analyzer module — Phase 2.
 Covers:
 - Schema introspection on live/mock engines
 - Column metadata discovery (data types, nullability, defaults)
-- Single-column primary key extraction
+- Single-column and composite primary key extraction
 - Single-column foreign key extraction
-- Unsupported schema detection (composite PK, composite FK, missing PK)
+- Unsupported schema detection (composite FK, missing PK)
 - Cycle detection warning in schema metadata
 """
 
@@ -102,8 +102,8 @@ class TestSchemaIntrospection:
         assert fks_by_col["dept_no"].referenced_table == "departments"
         assert fks_by_col["dept_no"].referenced_column == "dept_no"
 
-    def test_composite_primary_key_detected(self, sqlite_engine):
-        """Composite primary keys are detected and reported as unsupported in v1."""
+    def test_composite_primary_key_is_supported(self, sqlite_engine):
+        """Composite primary-key columns are preserved without an unsupported warning."""
         with sqlite_engine.connect() as conn:
             conn.execute(
                 text(
@@ -122,7 +122,10 @@ class TestSchemaIntrospection:
         schema = inspect_schema(sqlite_engine)
         tbl = schema.tables["project_members"]
         assert tbl.primary_key is None
-        assert any("composite primary key" in feat.lower() for feat in schema.unsupported_features)
+        assert tbl.primary_keys == ["project_id", "employee_id"]
+        assert tbl.is_composite_pk is True
+        assert all(column.is_primary_key for column in tbl.columns if column.name in tbl.primary_keys)
+        assert not any("composite primary key" in feat.lower() for feat in schema.unsupported_features)
 
     def test_table_without_primary_key_detected(self, sqlite_engine):
         """Tables without primary keys are detected and reported as unsupported."""

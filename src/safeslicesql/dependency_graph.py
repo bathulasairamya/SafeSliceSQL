@@ -322,6 +322,32 @@ def _resolve_fks_batch(
         return {pk: tbl_cache.get(pk, {fk: None for fk in fk_columns}) for pk in pk_values}
 
 
+def prime_foreign_key_cache(
+    graph: DependencyGraph,
+    engine: Any,
+    candidate_rows: dict[str, list[Any]],
+    batch_size: int = 5000,
+) -> None:
+    """Resolve FK values for candidate keys in batches before selection begins."""
+    if engine is None or not hasattr(engine, "connect"):
+        return
+
+    for table_name, pk_values in candidate_rows.items():
+        table_meta = graph.schema.tables.get(table_name)
+        if table_meta is None or not table_meta.foreign_keys:
+            continue
+        pk_columns = table_meta.effective_primary_keys or ["id"]
+        fk_columns = sorted({fk.column for fk in table_meta.foreign_keys})
+        for start in range(0, len(pk_values), batch_size):
+            _resolve_fks_batch(
+                engine=engine,
+                table_name=table_name,
+                pk_columns=pk_columns,
+                pk_values=pk_values[start : start + batch_size],
+                fk_columns=fk_columns,
+            )
+
+
 def _resolve_fk_value(
     engine: Any,
     table_name: str,

@@ -18,6 +18,7 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 from safeslicesql.dependency_graph import build_dependency_graph
+from safeslicesql.sampler import select_rows
 from safeslicesql.schema_analyzer import inspect_schema
 from safeslicesql.subset_generator import materialize_subset
 from safeslicesql.types import SelectionResult
@@ -407,23 +408,24 @@ class TestSubsetMaterializer:
 
         schema = inspect_schema(source)
         graph = build_dependency_graph(schema)
+        assert schema.tables["dept_emp"].primary_keys == ["emp_no", "dept_no"]
+        assert not any("composite primary key" in item.lower() for item in schema.unsupported_features)
 
-        selection = SelectionResult(
-            method="test",
-            seed=42,
+        selection = select_rows(
+            schema=schema,
+            workload=None,
+            graph=graph,
+            engine=source,
             budget=10,
-            selected_rows={
-                "departments": {"d001"},
-                "employees": {101},
-                "dept_emp": {(101, "d001")},
-            },
-            total_selected=3,
+            method="random-repair",
+            seed=42,
         )
+        assert all(isinstance(pk, tuple) for pk in selection.selected_rows["dept_emp"])
 
         res = materialize_subset(source, target, schema, selection, graph, "target_db")
         assert res.success is True
-        assert res.total_rows_inserted == 3
+        assert res.total_rows_inserted == selection.total_selected
 
         with target.connect() as conn:
             rows = conn.execute(text("SELECT emp_no, dept_no FROM dept_emp")).fetchall()
-            assert rows == [(101, "d001")]
+            assert set(rows) == set(selection.selected_rows["dept_emp"])

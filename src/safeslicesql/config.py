@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from sqlalchemy.engine import URL
 
 logger = logging.getLogger("safeslicesql.config")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass
@@ -30,17 +31,15 @@ class DatabaseConfig:
     database: str
 
     @property
-    def url(self) -> str:
-        """SQLAlchemy connection URL using pymysql driver."""
-        return str(
-            URL.create(
-                drivername="mysql+pymysql",
-                username=self.user,
-                password=self.password if self.password else None,
-                host=self.host,
-                port=self.port,
-                database=self.database,
-            )
+    def url(self) -> URL:
+        """Return a SQLAlchemy URL without rendering or masking credentials."""
+        return URL.create(
+            drivername="mysql+pymysql",
+            username=self.user,
+            password=self.password if self.password else None,
+            host=self.host,
+            port=self.port,
+            database=self.database,
         )
 
     def __repr__(self) -> str:
@@ -75,6 +74,8 @@ class AppConfig:
             errors.append("Source database host is required.")
         if not self.source_db.user:
             errors.append("Source database user is required.")
+        if not 1 <= self.source_db.port <= 65535:
+            errors.append("Source database port must be between 1 and 65535.")
 
         # Target database must be specified
         if not self.target_db.database:
@@ -83,6 +84,8 @@ class AppConfig:
             errors.append("Target database host is required.")
         if not self.target_db.user:
             errors.append("Target database user is required.")
+        if not 1 <= self.target_db.port <= 65535:
+            errors.append("Target database port must be between 1 and 65535.")
 
         # Safety: source and target must differ if on the same host
         if (
@@ -112,24 +115,18 @@ def _get_env_int(key: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        logger.warning(
-            "Environment variable %s=%r is not a valid integer; using default %d.",
-            key,
-            raw,
-            default,
-        )
-        return default
+        raise ValueError(f"Environment variable {key} must be an integer.") from None
 
 
-def load_config(env_path: str | Path = ".env") -> AppConfig:
+def load_config(env_path: str | Path | None = None) -> AppConfig:
     """
     Load application configuration from a `.env` file.
 
     Parameters
     ----------
-    env_path : str or Path
-        Path to the `.env` file. Defaults to `.env` in the current
-        working directory.
+    env_path : str, Path, or None
+        Optional path to an environment file. By default, `.env` is read
+        from the project root, independent of the current working directory.
 
     Returns
     -------
@@ -142,9 +139,10 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         If the configuration is invalid (e.g. source == target on same
         host, missing required fields).
     """
-    env_file = Path(env_path)
+    env_file = Path(env_path) if env_path is not None else PROJECT_ROOT / ".env"
+    env_file = env_file.resolve()
     if env_file.exists():
-        load_dotenv(env_file)
+        load_dotenv(dotenv_path=env_file, override=False)
         logger.info("Loaded environment from %s", env_file.resolve())
     else:
         logger.warning(
@@ -155,17 +153,17 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
     source_db = DatabaseConfig(
         host=_get_env("SAFESLICE_SOURCE_HOST", "localhost"),
         port=_get_env_int("SAFESLICE_SOURCE_PORT", 3306),
-        user=_get_env("SAFESLICE_SOURCE_USER", "root"),
+        user=_get_env("SAFESLICE_SOURCE_USER"),
         password=_get_env("SAFESLICE_SOURCE_PASSWORD", ""),
-        database=_get_env("SAFESLICE_SOURCE_DATABASE", "employees"),
+        database=_get_env("SAFESLICE_SOURCE_DATABASE"),
     )
 
     target_db = DatabaseConfig(
         host=_get_env("SAFESLICE_TARGET_HOST", "localhost"),
         port=_get_env_int("SAFESLICE_TARGET_PORT", 3306),
-        user=_get_env("SAFESLICE_TARGET_USER", "root"),
+        user=_get_env("SAFESLICE_TARGET_USER"),
         password=_get_env("SAFESLICE_TARGET_PASSWORD", ""),
-        database=_get_env("SAFESLICE_TARGET_DATABASE", "employees_slice"),
+        database=_get_env("SAFESLICE_TARGET_DATABASE"),
     )
 
     config = AppConfig(

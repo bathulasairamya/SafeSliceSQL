@@ -133,7 +133,8 @@ def inspect(
             )
             or "[dim]None[/dim]"
         )
-        pk_str = tbl.primary_key or "[red]None (unsupported)[/red]"
+        pk_columns = tbl.effective_primary_keys
+        pk_str = ", ".join(pk_columns) if pk_columns else "[red]None (unsupported)[/red]"
         table.add_row(tbl_name, pk_str, f"{tbl.row_count:,}", fks_str)
 
     console.print(table)

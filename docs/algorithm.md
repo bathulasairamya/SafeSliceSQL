@@ -1,7 +1,5 @@
 # SafeSliceSQL — Algorithm Design
 
-*To be completed in Phase 5.*
-
 ## Overview
 
 SafeSliceSQL uses a budget-aware, workload-aware greedy selection heuristic
@@ -34,6 +32,21 @@ Where:
 7. Repeat until no useful candidate fits remaining budget
 8. Materialize S
 ```
+
+## Primary-Key Representation
+
+Single-column primary keys use their scalar value. Composite primary keys use
+tuples in schema order, such as `(emp_no, dept_no)`. Candidate selection,
+dependency closure, validation, and materialization share this representation.
+Composite foreign-key constraints remain unsupported.
+
+## Candidate Pool and Runtime
+
+Selectors use deterministic reservoir sampling to cap candidates near the row
+budget. Foreign-key values for sampled candidates are prefetched in batches,
+and candidate closures are merged incrementally under the hard budget. This
+avoids loading every primary key into memory and repeatedly recomputing the
+entire selected closure.
 
 ## Value Function Features
 

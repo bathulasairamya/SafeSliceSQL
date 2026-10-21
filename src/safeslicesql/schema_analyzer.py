@@ -3,8 +3,8 @@ safeslicesql.schema_analyzer — Source database schema introspection.
 
 Discovers tables, columns, primary keys, foreign keys, nullability,
 and row counts from a live MySQL (or SQLAlchemy-supported) database.
-Detects and reports unsupported schema features (composite keys,
-composite foreign keys, cycles, etc.) per the v1 scope definition.
+Detects and reports unsupported schema features (composite foreign keys,
+cycles, etc.) per the supported scope definition.
 
 Owner: M1
 """
@@ -42,7 +42,6 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
     - Approximate or exact row counts per table
 
     Detects and reports as unsupported:
-    - Composite primary keys (flagged in unsupported_features)
     - Composite foreign keys (flagged in unsupported_features)
     - Missing primary keys (flagged in unsupported_features)
     - Cyclic foreign-key dependencies (flagged in unsupported_features)
@@ -132,9 +131,11 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
                 for c in columns:
                     if c.name in constrained_cols:
                         c.is_primary_key = True
-                warn_msg = f"Table '{table_name}' has composite primary key: {constrained_cols}."
-                logger.info(warn_msg)
-                schema.unsupported_features.append(warn_msg)
+                logger.debug(
+                    "Table '%s' has supported composite primary key: %s",
+                    table_name,
+                    constrained_cols,
+                )
             else:
                 warn_msg = f"Table '{table_name}' has no primary key defined."
                 logger.warning(warn_msg)

@@ -5,7 +5,7 @@
 | Category | Supported in v1 |
 |---|---|
 | **Database** | MySQL 8.x with InnoDB engine |
-| **Primary Keys** | Single-column primary keys |
+| **Primary Keys** | Single-column and composite primary keys |
 | **Foreign Keys** | Single-column foreign keys in acyclic graphs |
 | **Nullable FKs** | Treated as "no dependency" — NULL FK values do not require parent row inclusion |
 | **SQL Patterns** | SELECT, WHERE, JOIN (INNER), GROUP BY, basic aggregates (COUNT, SUM, MAX, MIN, AVG), HAVING |
@@ -18,7 +18,6 @@
 | Category | Unsupported Feature | Handling |
 |---|---|---|
 | **Database** | Non-InnoDB engines, PostgreSQL, other RDBMS | Not tested; behavior undefined |
-| **Primary Keys** | Composite primary keys | Detected and reported as unsupported |
 | **Foreign Keys** | Composite foreign keys | Detected and reported as unsupported |
 | **Foreign Keys** | Cyclic FK references | Detected and reported as unsupported |
 | **SQL Patterns** | Subqueries, CTEs, UNION, INTERSECT, EXCEPT | Excluded with reason |
@@ -53,7 +52,7 @@ When a row has a NULL value in a foreign-key column:
 
 ## Future Work
 
-- Composite key support
+- Composite foreign-key support
 - Cycle handling (e.g., via topological levels or deferred constraints)
 - LEFT/RIGHT JOIN support in workload analysis
 - Subquery and CTE support
