@@ -29,6 +29,16 @@ def _get_safeslice_cmd() -> list[str]:
     return [sys.executable, "-m", "safeslicesql.cli"]
 
 
+def _get_env_with_pythonpath() -> dict[str, str]:
+    """Return environment dictionary with src/ directory included in PYTHONPATH."""
+    import os
+    env = dict(os.environ)
+    src_dir = str(Path(__file__).resolve().parent.parent / "src")
+    existing_pp = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{existing_pp}" if existing_pp else src_dir
+    return env
+
+
 class TestConfigLoads:
     """Configuration loading tests."""
 
@@ -160,6 +170,7 @@ class TestCLI:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_get_env_with_pythonpath(),
             timeout=30,
         )
         assert result.returncode == 0, (
@@ -177,6 +188,7 @@ class TestCLI:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_get_env_with_pythonpath(),
             timeout=30,
         )
         assert result.returncode == 0
@@ -190,6 +202,7 @@ class TestCLI:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_get_env_with_pythonpath(),
             timeout=30,
         )
         assert result.returncode == 0
@@ -203,6 +216,7 @@ class TestCLI:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_get_env_with_pythonpath(),
             timeout=30,
         )
         assert result.returncode == 0
@@ -215,6 +229,7 @@ class TestCLI:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_get_env_with_pythonpath(),
             timeout=30,
         )
         assert result.returncode == 0

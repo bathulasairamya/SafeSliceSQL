@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "safeslicesql"
 version = "0.1.0"
 description = "Workload-aware database subsetting with referential integrity preservation"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "sqlalchemy>=2.0",
     "pymysql>=1.1",
