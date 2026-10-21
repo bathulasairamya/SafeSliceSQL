@@ -15,7 +15,6 @@ import safeslicesql.db as db_module
 from safeslicesql.config import AppConfig, DatabaseConfig, load_config
 from safeslicesql.types import SchemaMetadata
 
-
 ENV_KEYS = (
     "SAFESLICE_SOURCE_HOST",
     "SAFESLICE_SOURCE_PORT",
