@@ -18,7 +18,9 @@ import pytest
 def _get_safeslice_cmd() -> list[str]:
     """Resolve the safeslice CLI command cross-platform."""
     # Check within the current python environment (venv Scripts or bin)
-    venv_exe = Path(sys.executable).parent / ("safeslice.exe" if sys.platform == "win32" else "safeslice")
+    venv_exe = Path(sys.executable).parent / (
+        "safeslice.exe" if sys.platform == "win32" else "safeslice"
+    )
     if venv_exe.exists():
         return [str(venv_exe)]
     cmd = shutil.which("safeslice")
@@ -67,8 +69,9 @@ class TestDatabaseConnection:
 
     def test_employees_tables_exist(self, app_config):
         """Employees sample database has the expected tables."""
-        from safeslicesql.db import create_engine, test_connection
         from sqlalchemy import text
+
+        from safeslicesql.db import create_engine, test_connection
 
         engine = create_engine(app_config.source_db)
         if not test_connection(engine):
@@ -76,10 +79,7 @@ class TestDatabaseConnection:
 
         with engine.connect() as conn:
             result = conn.execute(
-                text(
-                    "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                    "WHERE TABLE_SCHEMA = :db"
-                ),
+                text("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = :db"),
                 {"db": app_config.source_db.database},
             )
             tables = {row[0] for row in result}
@@ -93,10 +93,7 @@ class TestDatabaseConnection:
             "salaries",
         }
         missing = expected - tables
-        assert not missing, (
-            f"Missing tables in source database: {missing}. "
-            f"Found: {tables}"
-        )
+        assert not missing, f"Missing tables in source database: {missing}. Found: {tables}"
 
     def test_employees_has_rows(self, app_config):
         """Employees database tables contain data."""
@@ -116,9 +113,7 @@ class TestWorkloadFile:
     def test_workload_file_exists(self):
         """The workload SQL file exists."""
         workload = Path("workloads/workload.sql")
-        assert workload.exists(), (
-            f"Workload file not found at {workload.resolve()}"
-        )
+        assert workload.exists(), f"Workload file not found at {workload.resolve()}"
 
     def test_workload_has_queries(self):
         """The workload file contains parseable SQL queries."""
@@ -126,16 +121,15 @@ class TestWorkloadFile:
 
         workload = Path("workloads/workload.sql")
         queries = load_workload(workload)
-        assert len(queries) >= 5, (
-            f"Expected at least 5 queries, found {len(queries)}"
-        )
+        assert len(queries) >= 5, f"Expected at least 5 queries, found {len(queries)}"
 
     @pytest.mark.db
     def test_workload_queries_execute(self, app_config):
         """All workload queries execute successfully on the source database."""
+        from sqlalchemy import text
+
         from safeslicesql.db import create_engine, test_connection
         from safeslicesql.workload_analyzer import load_workload
-        from sqlalchemy import text
 
         engine = create_engine(app_config.source_db)
         if not test_connection(engine):
@@ -152,9 +146,7 @@ class TestWorkloadFile:
                 except Exception as exc:
                     errors.append(f"Q{i} failed: {exc}")
 
-        assert not errors, (
-            "Some workload queries failed:\n" + "\n".join(errors)
-        )
+        assert not errors, "Some workload queries failed:\n" + "\n".join(errors)
 
 
 class TestCLI:
@@ -171,8 +163,7 @@ class TestCLI:
             timeout=30,
         )
         assert result.returncode == 0, (
-            f"safeslice --help failed with exit code {result.returncode}. "
-            f"stderr: {result.stderr}"
+            f"safeslice --help failed with exit code {result.returncode}. stderr: {result.stderr}"
         )
         assert "safeslice" in result.stdout.lower() or "SafeSliceSQL" in result.stdout, (
             f"CLI help output does not mention safeslice: {result.stdout}"

@@ -220,7 +220,11 @@ def materialize_subset(
 
                     if row_dicts:
                         # Convert date/datetime strings to python date objects for databases like SQLite
-                        date_cols = {c.name for c in target_table.columns if isinstance(c.type, (sa.Date, sa.DateTime))}
+                        date_cols = {
+                            c.name
+                            for c in target_table.columns
+                            if isinstance(c.type, (sa.Date, sa.DateTime))
+                        }
                         if date_cols:
                             for row in row_dicts:
                                 for col in date_cols:
@@ -230,7 +234,9 @@ def materialize_subset(
                                             if len(val) == 10:
                                                 row[col] = datetime.date.fromisoformat(val)
                                             elif len(val) >= 19:
-                                                row[col] = datetime.datetime.fromisoformat(val.replace(" ", "T"))
+                                                row[col] = datetime.datetime.fromisoformat(
+                                                    val.replace(" ", "T")
+                                                )
                                         except ValueError:
                                             pass
 
@@ -240,13 +246,15 @@ def materialize_subset(
                 rows_inserted[tbl_name] = inserted_for_table
                 logger.debug(
                     "Inserted %d rows into target table '%s'",
-                    inserted_for_table, tbl_name,
+                    inserted_for_table,
+                    tbl_name,
                 )
 
         total_inserted = sum(rows_inserted.values())
         logger.info(
             "Materialization succeeded: %d total rows inserted across %d tables",
-            total_inserted, len(insertion_order),
+            total_inserted,
+            len(insertion_order),
         )
 
         return GenerationResult(
@@ -264,7 +272,7 @@ def materialize_subset(
         logger.error(err_msg, exc_info=True)
         return GenerationResult(
             target_database=target_database,
-            tables_created=list(target_meta.tables.keys()) if 'target_meta' in locals() else [],
+            tables_created=list(target_meta.tables.keys()) if "target_meta" in locals() else [],
             rows_inserted=rows_inserted,
             total_rows_inserted=sum(rows_inserted.values()),
             insertion_order=insertion_order,
@@ -281,7 +289,9 @@ def _ensure_target_database_exists(target_engine: Engine, target_database: str) 
             server_url = target_engine.url.set(database="mysql")
             server_engine = sa.create_engine(server_url)
             with server_engine.connect() as conn:
-                conn.execute(sa.text(f"CREATE DATABASE IF NOT EXISTS {quote_ident(target_database)}"))
+                conn.execute(
+                    sa.text(f"CREATE DATABASE IF NOT EXISTS {quote_ident(target_database)}")
+                )
                 conn.commit()
             server_engine.dispose()
         except Exception as exc:

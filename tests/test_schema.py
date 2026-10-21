@@ -17,7 +17,6 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 from safeslicesql.schema_analyzer import inspect_schema
-from safeslicesql.types import ColumnMetadata, ForeignKeyMetadata, TableMetadata
 
 
 @pytest.fixture
@@ -123,10 +122,7 @@ class TestSchemaIntrospection:
         schema = inspect_schema(sqlite_engine)
         tbl = schema.tables["project_members"]
         assert tbl.primary_key is None
-        assert any(
-            "composite primary key" in feat.lower()
-            for feat in schema.unsupported_features
-        )
+        assert any("composite primary key" in feat.lower() for feat in schema.unsupported_features)
 
     def test_table_without_primary_key_detected(self, sqlite_engine):
         """Tables without primary keys are detected and reported as unsupported."""
@@ -146,20 +142,13 @@ class TestSchemaIntrospection:
         schema = inspect_schema(sqlite_engine)
         tbl = schema.tables["audit_log"]
         assert tbl.primary_key is None
-        assert any(
-            "no primary key" in feat.lower()
-            for feat in schema.unsupported_features
-        )
+        assert any("no primary key" in feat.lower() for feat in schema.unsupported_features)
 
     def test_row_counts_reflected(self, sqlite_engine):
         """Row counts are correctly recorded in table metadata."""
         with sqlite_engine.connect() as conn:
-            conn.execute(
-                text("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT);")
-            )
-            conn.execute(
-                text("INSERT INTO items (id, name) VALUES (1, 'A'), (2, 'B'), (3, 'C');")
-            )
+            conn.execute(text("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT);"))
+            conn.execute(text("INSERT INTO items (id, name) VALUES (1, 'A'), (2, 'B'), (3, 'C');"))
             conn.commit()
 
         schema = inspect_schema(sqlite_engine)

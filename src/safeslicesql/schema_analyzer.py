@@ -12,7 +12,6 @@ Owner: M1
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy import Engine
@@ -64,7 +63,9 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
 
     schema = SchemaMetadata(database_name=db_name)
     table_names = sorted(inspector.get_table_names())
-    logger.debug("Discovered %d tables in database '%s': %s", len(table_names), db_name, table_names)
+    logger.debug(
+        "Discovered %d tables in database '%s': %s", len(table_names), db_name, table_names
+    )
 
     # Pre-fetch row counts using a single connection (fast INFORMATION_SCHEMA on MySQL)
     table_row_counts: dict[str, int] = {}
@@ -131,10 +132,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
                 for c in columns:
                     if c.name in constrained_cols:
                         c.is_primary_key = True
-                warn_msg = (
-                    f"Table '{table_name}' has composite primary key: "
-                    f"{constrained_cols}."
-                )
+                warn_msg = f"Table '{table_name}' has composite primary key: {constrained_cols}."
                 logger.info(warn_msg)
                 schema.unsupported_features.append(warn_msg)
             else:
@@ -187,6 +185,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
 
     # 5. Check for cyclic dependencies in the schema
     from safeslicesql.dependency_graph import build_dependency_graph
+
     try:
         graph = build_dependency_graph(schema)
         if graph.has_cycles:
@@ -201,6 +200,8 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
 
     logger.info(
         "Schema introspection complete: %d tables, %d total rows, %d unsupported feature warnings",
-        len(schema.tables), schema.total_row_count, len(schema.unsupported_features),
+        len(schema.tables),
+        schema.total_row_count,
+        len(schema.unsupported_features),
     )
     return schema

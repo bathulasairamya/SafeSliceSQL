@@ -180,10 +180,7 @@ def select_rows(
         If *method* is not one of the supported methods.
     """
     if method not in METHODS:
-        raise ValueError(
-            f"Unknown method '{method}'. "
-            f"Supported methods: {', '.join(METHODS)}"
-        )
+        raise ValueError(f"Unknown method '{method}'. Supported methods: {', '.join(METHODS)}")
 
     graph = _ensure_graph(schema, graph)
 
@@ -193,7 +190,12 @@ def select_rows(
         return _select_referential(schema, graph, engine, budget, seed)
     else:
         return _select_workload_aware(
-            schema, workload, graph, engine, budget, seed,
+            schema,
+            workload,
+            graph,
+            engine,
+            budget,
+            seed,
         )
 
 
@@ -265,9 +267,7 @@ def _select_random_repair(
         seed=seed,
         budget=budget,
         selected_rows={
-            table: _stable_pk_values(list(values))
-            for table, values in selected.items()
-            if values
+            table: _stable_pk_values(list(values)) for table, values in selected.items() if values
         },
         total_selected=_selection_total(selected),
         closure_additions=total_closure_additions,
@@ -339,9 +339,7 @@ def _select_referential(
         seed=seed,
         budget=budget,
         selected_rows={
-            table: _stable_pk_values(list(values))
-            for table, values in selected.items()
-            if values
+            table: _stable_pk_values(list(values)) for table, values in selected.items() if values
         },
         total_selected=_selection_total(selected),
         closure_additions=total_closure_additions,
@@ -381,7 +379,9 @@ def _select_workload_aware(
         for table_name in query.tables:
             table_weights[table_name] = table_weights.get(table_name, 0.0) + 2.0
         if query.join_tables:
-            table_weights[query.tables[0]] = table_weights.get(query.tables[0], 0.0) + 0.5 * len(query.join_tables)
+            table_weights[query.tables[0]] = table_weights.get(query.tables[0], 0.0) + 0.5 * len(
+                query.join_tables
+            )
         if query.filter_columns:
             for table_name, _ in query.filter_columns:
                 if table_name in schema.tables:
@@ -471,7 +471,8 @@ def _select_workload_aware(
 
         # Remove processed candidates from remaining
         remaining = [
-            item for j, item in enumerate(remaining)
+            item
+            for j, item in enumerate(remaining)
             if j >= len(window) or j not in indices_to_remove
         ]
 
@@ -483,9 +484,7 @@ def _select_workload_aware(
         seed=seed,
         budget=budget,
         selected_rows={
-            table: _stable_pk_values(list(values))
-            for table, values in selected.items()
-            if values
+            table: _stable_pk_values(list(values)) for table, values in selected.items() if values
         },
         total_selected=_selection_total(selected),
         closure_additions=total_closure_additions,

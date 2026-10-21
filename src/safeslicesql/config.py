@@ -113,9 +113,10 @@ def _get_env_int(key: str, default: int) -> int:
         return int(raw)
     except ValueError:
         logger.warning(
-            "Environment variable %s=%r is not a valid integer; "
-            "using default %d.",
-            key, raw, default,
+            "Environment variable %s=%r is not a valid integer; using default %d.",
+            key,
+            raw,
+            default,
         )
         return default
 
@@ -147,8 +148,7 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         logger.info("Loaded environment from %s", env_file.resolve())
     else:
         logger.warning(
-            "Environment file %s not found; using system environment "
-            "variables only.",
+            "Environment file %s not found; using system environment variables only.",
             env_file,
         )
 
@@ -177,12 +177,11 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
 
     errors = config.validate()
     if errors:
-        msg = "Configuration validation failed:\n" + "\n".join(
-            f"  - {e}" for e in errors
-        )
+        msg = "Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
         logger.error(msg)
         raise ValueError(msg)
 
-    logger.info("Configuration loaded: source=%s, target=%s",
-                source_db.database, target_db.database)
+    logger.info(
+        "Configuration loaded: source=%s, target=%s", source_db.database, target_db.database
+    )
     return config

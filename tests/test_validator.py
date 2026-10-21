@@ -18,13 +18,21 @@ def test_validate_subset_detects_valid_subset():
 
     with source.begin() as conn:
         conn.execute(text("CREATE TABLE departments (dept_no TEXT PRIMARY KEY, dept_name TEXT)"))
-        conn.execute(text("CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, dept_no TEXT, FOREIGN KEY(dept_no) REFERENCES departments(dept_no))"))
+        conn.execute(
+            text(
+                "CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, dept_no TEXT, FOREIGN KEY(dept_no) REFERENCES departments(dept_no))"
+            )
+        )
         conn.execute(text("INSERT INTO departments VALUES ('d1', 'Sales')"))
         conn.execute(text("INSERT INTO employees VALUES (1, 'd1')"))
 
     with target.begin() as conn:
         conn.execute(text("CREATE TABLE departments (dept_no TEXT PRIMARY KEY, dept_name TEXT)"))
-        conn.execute(text("CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, dept_no TEXT, FOREIGN KEY(dept_no) REFERENCES departments(dept_no))"))
+        conn.execute(
+            text(
+                "CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, dept_no TEXT, FOREIGN KEY(dept_no) REFERENCES departments(dept_no))"
+            )
+        )
         conn.execute(text("INSERT INTO departments VALUES ('d1', 'Sales')"))
         conn.execute(text("INSERT INTO employees VALUES (1, 'd1')"))
 
@@ -49,7 +57,22 @@ def test_evaluate_workload_returns_retention_metrics():
 
     workload = analyze_workload(Path("workloads/workload.sql"), engine=None)
     workload.queries = [
-        type("QueryInfo", (), {"query_id": "Q1", "raw_sql": "SELECT * FROM employees WHERE emp_no = 1", "tables": ["employees"], "join_tables": [], "filter_columns": [("employees", "emp_no")], "group_columns": [], "aggregate_functions": [], "is_supported": True, "exclusion_reason": "", "source_row_count": 1})()
+        type(
+            "QueryInfo",
+            (),
+            {
+                "query_id": "Q1",
+                "raw_sql": "SELECT * FROM employees WHERE emp_no = 1",
+                "tables": ["employees"],
+                "join_tables": [],
+                "filter_columns": [("employees", "emp_no")],
+                "group_columns": [],
+                "aggregate_functions": [],
+                "is_supported": True,
+                "exclusion_reason": "",
+                "source_row_count": 1,
+            },
+        )()
     ]
 
     report = evaluate_workload(source, target, workload)
@@ -123,18 +146,22 @@ def test_evaluate_workload_group_aggregate_retention():
 
     workload = analyze_workload(Path("workloads/workload.sql"), engine=None)
     workload.queries = [
-        type("QueryInfo", (), {
-            "query_id": "Q_AGG",
-            "raw_sql": "SELECT emp_no, COUNT(*) FROM salaries GROUP BY emp_no",
-            "tables": ["salaries"],
-            "join_tables": [],
-            "filter_columns": [],
-            "group_columns": [("salaries", "emp_no")],
-            "aggregate_functions": ["COUNT"],
-            "is_supported": True,
-            "exclusion_reason": "",
-            "source_row_count": 2,
-        })()
+        type(
+            "QueryInfo",
+            (),
+            {
+                "query_id": "Q_AGG",
+                "raw_sql": "SELECT emp_no, COUNT(*) FROM salaries GROUP BY emp_no",
+                "tables": ["salaries"],
+                "join_tables": [],
+                "filter_columns": [],
+                "group_columns": [("salaries", "emp_no")],
+                "aggregate_functions": ["COUNT"],
+                "is_supported": True,
+                "exclusion_reason": "",
+                "source_row_count": 2,
+            },
+        )()
     ]
 
     report = evaluate_workload(source, target, workload)
@@ -145,4 +172,3 @@ def test_evaluate_workload_group_aggregate_retention():
     assert res.aggregate_retention == 0.5
     assert res.key_retention == 0.5
     assert res.result_row_retention == 0.0
-

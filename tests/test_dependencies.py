@@ -16,7 +16,6 @@ from __future__ import annotations
 import pytest
 
 from safeslicesql.dependency_graph import (
-    DependencyGraph,
     build_dependency_graph,
     compute_closure,
 )
@@ -100,9 +99,7 @@ def multi_tier_schema() -> SchemaMetadata:
         name="stores",
         primary_key="store_id",
         columns=[ColumnMetadata("store_id", "INTEGER", False, is_primary_key=True)],
-        foreign_keys=[
-            ForeignKeyMetadata("fk_store_reg", "region_id", "regions", "region_id")
-        ],
+        foreign_keys=[ForeignKeyMetadata("fk_store_reg", "region_id", "regions", "region_id")],
     )
 
     return schema
@@ -150,18 +147,14 @@ class TestDependencyGraph:
         schema.tables["table_a"] = TableMetadata(
             name="table_a",
             primary_key="id",
-            foreign_keys=[
-                ForeignKeyMetadata("fk_a_b", "b_id", "table_b", "id")
-            ],
+            foreign_keys=[ForeignKeyMetadata("fk_a_b", "b_id", "table_b", "id")],
         )
 
         # Table B references Table A (Cycle!)
         schema.tables["table_b"] = TableMetadata(
             name="table_b",
             primary_key="id",
-            foreign_keys=[
-                ForeignKeyMetadata("fk_b_a", "a_id", "table_a", "id")
-            ],
+            foreign_keys=[ForeignKeyMetadata("fk_b_a", "a_id", "table_a", "id")],
         )
 
         graph = build_dependency_graph(schema)
@@ -326,9 +319,7 @@ class TestDependencyClosure:
                 ColumnMetadata("emp_no", "INTEGER", False, is_primary_key=True),
                 ColumnMetadata("manager_id", "INTEGER", True),
             ],
-            foreign_keys=[
-                ForeignKeyMetadata("fk_emp_mgr", "manager_id", "employees", "emp_no")
-            ],
+            foreign_keys=[ForeignKeyMetadata("fk_emp_mgr", "manager_id", "employees", "emp_no")],
         )
 
         graph = build_dependency_graph(schema)
@@ -339,8 +330,9 @@ class TestDependencyClosure:
     def test_database_resolution_error_propagation(self):
         """SQL error during batch resolution raises DatabaseResolutionError."""
         import sqlalchemy as sa
-        from safeslicesql.types import DatabaseResolutionError
+
         from safeslicesql.dependency_graph import _resolve_fks_batch
+        from safeslicesql.types import DatabaseResolutionError
 
         engine = sa.create_engine("sqlite:///:memory:")
         with pytest.raises(DatabaseResolutionError):
@@ -357,13 +349,21 @@ class TestDependencyClosure:
         """Transitive closure resolves outgoing FKs on composite PK child tables via live DB engine."""
         import sqlalchemy as sa
         from sqlalchemy import text
+
         from safeslicesql.schema_analyzer import inspect_schema
 
         engine = sa.create_engine("sqlite:///:memory:")
         with engine.begin() as conn:
-            conn.execute(text("CREATE TABLE departments (dept_no VARCHAR(4) PRIMARY KEY, dept_name VARCHAR(40));"))
-            conn.execute(text("CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, name VARCHAR(40));"))
-            conn.execute(text("""
+            conn.execute(
+                text(
+                    "CREATE TABLE departments (dept_no VARCHAR(4) PRIMARY KEY, dept_name VARCHAR(40));"
+                )
+            )
+            conn.execute(
+                text("CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, name VARCHAR(40));")
+            )
+            conn.execute(
+                text("""
                 CREATE TABLE dept_emp (
                     emp_no INTEGER NOT NULL,
                     dept_no VARCHAR(4) NOT NULL,
@@ -371,8 +371,11 @@ class TestDependencyClosure:
                     FOREIGN KEY (emp_no) REFERENCES employees(emp_no),
                     FOREIGN KEY (dept_no) REFERENCES departments(dept_no)
                 );
-            """))
-            conn.execute(text("INSERT INTO departments VALUES ('d001', 'Engineering'), ('d002', 'Finance');"))
+            """)
+            )
+            conn.execute(
+                text("INSERT INTO departments VALUES ('d001', 'Engineering'), ('d002', 'Finance');")
+            )
             conn.execute(text("INSERT INTO employees VALUES (101, 'Ada'), (102, 'Grace');"))
             conn.execute(text("INSERT INTO dept_emp VALUES (101, 'd001'), (102, 'd002');"))
 
@@ -390,4 +393,3 @@ class TestDependencyClosure:
         assert closure.selected_rows["departments"] == {"d001"}
         assert closure.closure_additions["employees"] == {101}
         assert closure.closure_additions["departments"] == {"d001"}
-

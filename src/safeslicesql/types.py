@@ -14,12 +14,14 @@ from typing import Any
 
 class DatabaseResolutionError(RuntimeError):
     """Raised when foreign key or dependency resolution fails due to a query/database error."""
+
     pass
 
 
 # ────────────────────────────────────────────────────────────
 # Schema metadata types
 # ────────────────────────────────────────────────────────────
+
 
 @dataclass
 class ColumnMetadata:
@@ -38,9 +40,9 @@ class ForeignKeyMetadata:
     """Metadata for a single foreign-key constraint."""
 
     constraint_name: str
-    column: str                  # Referencing (child) column
-    referenced_table: str        # Referenced (parent) table
-    referenced_column: str       # Referenced (parent) column
+    column: str  # Referencing (child) column
+    referenced_table: str  # Referenced (parent) table
+    referenced_column: str  # Referenced (parent) column
 
 
 @dataclass
@@ -49,8 +51,10 @@ class TableMetadata:
 
     name: str
     columns: list[ColumnMetadata] = field(default_factory=list)
-    primary_key: str | None = None          # Single-column PK column name
-    primary_keys: list[str] = field(default_factory=list)  # All PK column names (single or composite)
+    primary_key: str | None = None  # Single-column PK column name
+    primary_keys: list[str] = field(
+        default_factory=list
+    )  # All PK column names (single or composite)
     row_count: int = 0
     foreign_keys: list[ForeignKeyMetadata] = field(default_factory=list)
 
@@ -104,15 +108,16 @@ class SchemaMetadata:
 # Dependency graph types
 # ────────────────────────────────────────────────────────────
 
+
 @dataclass
 class ClosureResult:
     """Result of computing the dependency closure for a set of rows."""
 
-    selected_rows: dict[str, set[Any]]    # table → set of PK values
+    selected_rows: dict[str, set[Any]]  # table → set of PK values
     closure_additions: dict[str, set[Any]]  # additional parent rows added
     total_rows: int = 0
     total_closure_additions: int = 0
-    is_feasible: bool = True              # False if closure exceeds budget
+    is_feasible: bool = True  # False if closure exceeds budget
     infeasibility_reason: str = ""
 
 
@@ -120,14 +125,15 @@ class ClosureResult:
 # Selection types
 # ────────────────────────────────────────────────────────────
 
+
 @dataclass
 class SelectionResult:
     """Result of a row-selection method."""
 
     method: str
     seed: int
-    budget: int                             # Max allowed total rows
-    selected_rows: dict[str, list[Any]]     # table_name → list of PK values
+    budget: int  # Max allowed total rows
+    selected_rows: dict[str, list[Any]]  # table_name → list of PK values
     total_selected: int = 0
     closure_additions: int = 0
     rejected_candidates: int = 0
@@ -137,6 +143,7 @@ class SelectionResult:
 # ────────────────────────────────────────────────────────────
 # Materialization types
 # ────────────────────────────────────────────────────────────
+
 
 @dataclass
 class GenerationResult:
@@ -154,6 +161,7 @@ class GenerationResult:
 # ────────────────────────────────────────────────────────────
 # Validation types
 # ────────────────────────────────────────────────────────────
+
 
 @dataclass
 class ValidationReport:
@@ -189,6 +197,7 @@ class ValidationReport:
 # Workload evaluation types
 # ────────────────────────────────────────────────────────────
 
+
 @dataclass
 class QueryResult:
     """Per-query evaluation result comparing source vs target."""
@@ -199,14 +208,14 @@ class QueryResult:
     target_row_count: int = 0
     source_empty: bool = False
     target_empty: bool = False
-    survived: bool = False           # Nonempty on source and target
-    key_retention: float = 0.0       # Fraction of source keys retained
+    survived: bool = False  # Nonempty on source and target
+    key_retention: float = 0.0  # Fraction of source keys retained
     result_row_retention: float = 0.0
     aggregate_retention: float = 0.0
     execution_time_source: float = 0.0
     execution_time_target: float = 0.0
     error: str = ""
-    excluded: bool = False           # True if query pattern is unsupported
+    excluded: bool = False  # True if query pattern is unsupported
     exclusion_reason: str = ""
 
 
@@ -228,6 +237,7 @@ class WorkloadReport:
 # ────────────────────────────────────────────────────────────
 # Benchmark types
 # ────────────────────────────────────────────────────────────
+
 
 @dataclass
 class BenchmarkRunResult:

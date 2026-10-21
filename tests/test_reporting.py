@@ -150,7 +150,9 @@ def test_console_summary_printers():
         per_query_results=[
             QueryResult(query_id="Q1", query_text="SELECT 1", survived=True),
             QueryResult(query_id="Q2", query_text="SELECT 2", error="Syntax error"),
-            QueryResult(query_id="Q3", query_text="SELECT 3", excluded=True, exclusion_reason="Window func"),
+            QueryResult(
+                query_id="Q3", query_text="SELECT 3", excluded=True, exclusion_reason="Window func"
+            ),
         ],
         total_queries=3,
         supported_queries=2,

@@ -65,13 +65,19 @@ def source_engine():
         )
         # Seed source data
         conn.execute(
-            text("INSERT INTO departments VALUES ('d001', 'Marketing'), ('d002', 'Finance'), ('d003', 'Human Resources');")
+            text(
+                "INSERT INTO departments VALUES ('d001', 'Marketing'), ('d002', 'Finance'), ('d003', 'Human Resources');"
+            )
         )
         conn.execute(
-            text("INSERT INTO employees VALUES (101, 'Alice', 'Smith'), (102, 'Bob', 'Jones'), (103, 'Charlie', 'Brown');")
+            text(
+                "INSERT INTO employees VALUES (101, 'Alice', 'Smith'), (102, 'Bob', 'Jones'), (103, 'Charlie', 'Brown');"
+            )
         )
         conn.execute(
-            text("INSERT INTO dept_emp VALUES (1, 101, 'd001'), (2, 102, 'd002'), (3, 103, 'd001');")
+            text(
+                "INSERT INTO dept_emp VALUES (1, 101, 'd001'), (2, 102, 'd002'), (3, 103, 'd001');"
+            )
         )
         conn.commit()
 
@@ -280,7 +286,9 @@ class TestSubsetMaterializer:
             selected_rows={"departments": ["d001"]},
             total_selected=1,
         )
-        res1 = materialize_subset(source_engine, target_engine, schema, selection1, graph, "target_db")
+        res1 = materialize_subset(
+            source_engine, target_engine, schema, selection1, graph, "target_db"
+        )
         assert res1.success is True
         assert res1.total_rows_inserted == 1
 
@@ -292,7 +300,9 @@ class TestSubsetMaterializer:
             selected_rows={"departments": ["d002", "d003"]},
             total_selected=2,
         )
-        res2 = materialize_subset(source_engine, target_engine, schema, selection2, graph, "target_db")
+        res2 = materialize_subset(
+            source_engine, target_engine, schema, selection2, graph, "target_db"
+        )
         assert res2.success is True
         assert res2.total_rows_inserted == 2
 
@@ -312,7 +322,9 @@ class TestSubsetMaterializer:
             total_selected=0,
         )
 
-        res = materialize_subset(source_engine, target_engine, schema, selection, graph, "target_db")
+        res = materialize_subset(
+            source_engine, target_engine, schema, selection, graph, "target_db"
+        )
         assert res.success is True
         assert res.total_rows_inserted == 0
         assert set(res.tables_created) == {"departments", "employees", "dept_emp"}
@@ -322,6 +334,7 @@ class TestSubsetMaterializer:
         schema = inspect_schema(source_engine)
         # Manually inject a cycle into schema
         from safeslicesql.types import ForeignKeyMetadata
+
         schema.tables["departments"].foreign_keys.append(
             ForeignKeyMetadata("fk_dept_cycle", "dept_no", "dept_emp", "dept_no")
         )
@@ -329,7 +342,9 @@ class TestSubsetMaterializer:
         assert graph.has_cycles is True
 
         selection = SelectionResult(method="test", seed=1, budget=10, selected_rows={})
-        res = materialize_subset(source_engine, target_engine, schema, selection, graph, "target_db")
+        res = materialize_subset(
+            source_engine, target_engine, schema, selection, graph, "target_db"
+        )
 
         assert res.success is False
         assert "cycles" in res.error_message.lower()
@@ -337,6 +352,7 @@ class TestSubsetMaterializer:
     def test_fallback_schema_creation_from_metadata(self, source_engine, target_engine):
         """Verify schema reproduction works using SchemaMetadata when reflection is bypassed."""
         from safeslicesql.subset_generator import _reproduce_schema_on_target
+
         schema = inspect_schema(source_engine)
         graph = build_dependency_graph(schema)
         order = graph.topological_order()
@@ -356,8 +372,14 @@ class TestSubsetMaterializer:
         target = sa.create_engine("sqlite:///:memory:")
 
         with source.connect() as conn:
-            conn.execute(text("CREATE TABLE departments (dept_no VARCHAR(4) PRIMARY KEY, dept_name VARCHAR(40));"))
-            conn.execute(text("CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, name VARCHAR(40));"))
+            conn.execute(
+                text(
+                    "CREATE TABLE departments (dept_no VARCHAR(4) PRIMARY KEY, dept_name VARCHAR(40));"
+                )
+            )
+            conn.execute(
+                text("CREATE TABLE employees (emp_no INTEGER PRIMARY KEY, name VARCHAR(40));")
+            )
             conn.execute(
                 text(
                     """
@@ -372,9 +394,15 @@ class TestSubsetMaterializer:
                     """
                 )
             )
-            conn.execute(text("INSERT INTO departments VALUES ('d001', 'Engineering'), ('d002', 'Sales');"))
+            conn.execute(
+                text("INSERT INTO departments VALUES ('d001', 'Engineering'), ('d002', 'Sales');")
+            )
             conn.execute(text("INSERT INTO employees VALUES (101, 'Ada'), (102, 'Grace');"))
-            conn.execute(text("INSERT INTO dept_emp VALUES (101, 'd001', '2020-01-01'), (102, 'd002', '2021-01-01');"))
+            conn.execute(
+                text(
+                    "INSERT INTO dept_emp VALUES (101, 'd001', '2020-01-01'), (102, 'd002', '2021-01-01');"
+                )
+            )
             conn.commit()
 
         schema = inspect_schema(source)
@@ -399,4 +427,3 @@ class TestSubsetMaterializer:
         with target.connect() as conn:
             rows = conn.execute(text("SELECT emp_no, dept_no FROM dept_emp")).fetchall()
             assert rows == [(101, "d001")]
-

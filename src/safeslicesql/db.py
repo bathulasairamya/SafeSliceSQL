@@ -58,7 +58,10 @@ def create_engine(
     )
     logger.info(
         "Created engine for %s@%s:%d/%s",
-        config.user, config.host, config.port, config.database,
+        config.user,
+        config.host,
+        config.port,
+        config.database,
     )
     return engine
 
@@ -70,8 +73,7 @@ def get_source_engine(app_config: AppConfig, **kwargs: Any) -> sa.Engine:
     This engine should be used for read-only operations: schema
     inspection, workload evaluation, and source-immutability checks.
     """
-    logger.info("Creating source engine for database '%s'",
-                app_config.source_db.database)
+    logger.info("Creating source engine for database '%s'", app_config.source_db.database)
     return create_engine(app_config.source_db, **kwargs)
 
 
@@ -91,19 +93,14 @@ def get_target_engine(app_config: AppConfig, **kwargs: Any) -> sa.Engine:
     src = app_config.source_db
     tgt = app_config.target_db
 
-    if (
-        src.host == tgt.host
-        and src.port == tgt.port
-        and src.database == tgt.database
-    ):
+    if src.host == tgt.host and src.port == tgt.port and src.database == tgt.database:
         raise ValueError(
             f"Refusing to create target engine: target database "
             f"'{tgt.database}' is the same as the source database on "
             f"{tgt.host}:{tgt.port}. This would overwrite the source."
         )
 
-    logger.info("Creating target engine for database '%s'",
-                tgt.database)
+    logger.info("Creating target engine for database '%s'", tgt.database)
     return create_engine(tgt, **kwargs)
 
 
@@ -125,7 +122,8 @@ def test_connection(engine: sa.Engine) -> bool:
     except Exception as exc:
         logger.error(
             "Connection test FAILED for %s: %s",
-            engine.url.database, exc,
+            engine.url.database,
+            exc,
         )
         return False
 
@@ -149,9 +147,7 @@ _quote_ident = quote_ident
 def get_row_count(engine: sa.Engine, table_name: str) -> int:
     """Return the exact row count for a table."""
     with engine.connect() as conn:
-        result = conn.execute(
-            text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}")
-        )
+        result = conn.execute(text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}"))
         count = result.scalar() or 0
     return count
 
@@ -163,10 +159,7 @@ def database_exists(engine: sa.Engine, db_name: str) -> bool:
     try:
         with engine.connect() as conn:
             result = conn.execute(
-                text(
-                    "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA "
-                    "WHERE SCHEMA_NAME = :db"
-                ),
+                text("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = :db"),
                 {"db": db_name},
             )
             return result.fetchone() is not None

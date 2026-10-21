@@ -12,15 +12,15 @@ from __future__ import annotations
 
 import csv
 import logging
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Any
 
+import sqlalchemy as sa
+import yaml
 from rich.console import Console
 from rich.table import Table
-import sqlalchemy as sa
 from sqlalchemy import Engine
-import yaml
 
 from safeslicesql.config import load_config
 from safeslicesql.db import get_source_engine, get_target_engine, test_connection
@@ -164,16 +164,22 @@ def run_benchmark(
         schema = inspect_schema(source_engine)
         graph = build_dependency_graph(schema)
         total_source_rows = schema.total_row_count
-        console.print(f"Source Database: [bold]{total_source_rows:,}[/bold] total rows across [bold]{len(schema.table_names)}[/bold] tables.")
+        console.print(
+            f"Source Database: [bold]{total_source_rows:,}[/bold] total rows across [bold]{len(schema.table_names)}[/bold] tables."
+        )
 
         workload_analysis = None
         if workload_path.exists():
             workload_analysis = analyze_workload(workload_path, engine=source_engine)
-            console.print(f"Parsed workload with [bold]{len(workload_analysis.queries)}[/bold] queries "
-                          f"([bold]{len(workload_analysis.supported_queries)}[/bold] supported).")
+            console.print(
+                f"Parsed workload with [bold]{len(workload_analysis.queries)}[/bold] queries "
+                f"([bold]{len(workload_analysis.supported_queries)}[/bold] supported)."
+            )
 
         total_experiments = len(methods) * len(budget_percents) * len(seeds)
-        console.print(f"\n[bold green]Running {total_experiments} total experiments...[/bold green]\n")
+        console.print(
+            f"\n[bold green]Running {total_experiments} total experiments...[/bold green]\n"
+        )
 
         all_runs: list[BenchmarkRunResult] = []
         exp_index = 0
@@ -251,11 +257,19 @@ def run_benchmark(
 
                         is_success = bool(generation.success and validation.is_valid)
                         if is_success:
-                            surv_pct = f"{wl_report.query_survival_rate * 100:.1f}%" if wl_report else "N/A"
-                            console.print(f"[green]SUCCESS[/green] (surv={surv_pct}, time={t_sel + t_gen + t_val + t_wl:.2f}s)")
+                            surv_pct = (
+                                f"{wl_report.query_survival_rate * 100:.1f}%"
+                                if wl_report
+                                else "N/A"
+                            )
+                            console.print(
+                                f"[green]SUCCESS[/green] (surv={surv_pct}, time={t_sel + t_gen + t_val + t_wl:.2f}s)"
+                            )
                         else:
-                            console.print(f"[yellow]FAILED VALIDATION[/yellow]")
-                            run_err = "; ".join(validation.errors) if validation else "Validation failed"
+                            console.print("[yellow]FAILED VALIDATION[/yellow]")
+                            run_err = (
+                                "; ".join(validation.errors) if validation else "Validation failed"
+                            )
 
                     except Exception as exc:
                         console.print(f"[red]CRASHED[/red] ({exc})")
@@ -275,7 +289,9 @@ def run_benchmark(
                         runtime_materialization=t_gen,
                         runtime_validation=t_val,
                         runtime_workload_eval=t_wl,
-                        success=bool(validation and validation.is_valid and generation and generation.success),
+                        success=bool(
+                            validation and validation.is_valid and generation and generation.success
+                        ),
                         error_message=run_err,
                     )
                     all_runs.append(run_res)
@@ -314,36 +330,43 @@ def _compile_and_save_summaries(
         gen = r.generation
         val = r.validation
         wl = r.workload
-        total_runtime = r.runtime_selection + r.runtime_materialization + r.runtime_validation + r.runtime_workload_eval
+        total_runtime = (
+            r.runtime_selection
+            + r.runtime_materialization
+            + r.runtime_validation
+            + r.runtime_workload_eval
+        )
 
-        rows_data.append({
-            "run_id": r.run_id,
-            "method": r.method,
-            "seed": r.seed,
-            "budget_percent": r.budget_percent,
-            "dataset_size": r.dataset_size,
-            "success": r.success,
-            "total_selected": sel.total_selected if sel else 0,
-            "closure_additions": sel.closure_additions if sel else 0,
-            "rejected_candidates": sel.rejected_candidates if sel else 0,
-            "total_rows_inserted": gen.total_rows_inserted if gen else 0,
-            "is_valid": val.is_valid if val else False,
-            "pk_unique": val.pk_unique if val else False,
-            "fk_violations": val.fk_violations if val else 0,
-            "budget_compliant": val.budget_compliant if val else False,
-            "actual_rows": val.actual_rows if val else 0,
-            "budget_limit": val.budget_limit if val else 0,
-            "query_survival_rate": wl.query_survival_rate if wl else 0.0,
-            "overall_key_retention": wl.overall_key_retention if wl else 0.0,
-            "overall_result_retention": wl.overall_result_retention if wl else 0.0,
-            "overall_aggregate_retention": wl.overall_aggregate_retention if wl else 0.0,
-            "runtime_selection": r.runtime_selection,
-            "runtime_materialization": r.runtime_materialization,
-            "runtime_validation": r.runtime_validation,
-            "runtime_workload_eval": r.runtime_workload_eval,
-            "total_runtime": total_runtime,
-            "error_message": r.error_message,
-        })
+        rows_data.append(
+            {
+                "run_id": r.run_id,
+                "method": r.method,
+                "seed": r.seed,
+                "budget_percent": r.budget_percent,
+                "dataset_size": r.dataset_size,
+                "success": r.success,
+                "total_selected": sel.total_selected if sel else 0,
+                "closure_additions": sel.closure_additions if sel else 0,
+                "rejected_candidates": sel.rejected_candidates if sel else 0,
+                "total_rows_inserted": gen.total_rows_inserted if gen else 0,
+                "is_valid": val.is_valid if val else False,
+                "pk_unique": val.pk_unique if val else False,
+                "fk_violations": val.fk_violations if val else 0,
+                "budget_compliant": val.budget_compliant if val else False,
+                "actual_rows": val.actual_rows if val else 0,
+                "budget_limit": val.budget_limit if val else 0,
+                "query_survival_rate": wl.query_survival_rate if wl else 0.0,
+                "overall_key_retention": wl.overall_key_retention if wl else 0.0,
+                "overall_result_retention": wl.overall_result_retention if wl else 0.0,
+                "overall_aggregate_retention": wl.overall_aggregate_retention if wl else 0.0,
+                "runtime_selection": r.runtime_selection,
+                "runtime_materialization": r.runtime_materialization,
+                "runtime_validation": r.runtime_validation,
+                "runtime_workload_eval": r.runtime_workload_eval,
+                "total_runtime": total_runtime,
+                "error_message": r.error_message,
+            }
+        )
 
     # Save combined raw runs
     combined_raw_path = raw_dir / "all_benchmark_runs.csv"
@@ -357,6 +380,7 @@ def _compile_and_save_summaries(
     # Compute summary aggregates grouped by (method, budget_percent)
     try:
         import pandas as pd
+
         df = pd.DataFrame(rows_data)
 
         metric_cols = [
@@ -371,15 +395,12 @@ def _compile_and_save_summaries(
         ]
 
         summary_df = (
-            df.groupby(["method", "budget_percent"])[metric_cols]
-            .agg(["mean", "std"])
-            .reset_index()
+            df.groupby(["method", "budget_percent"])[metric_cols].agg(["mean", "std"]).reset_index()
         )
 
         # Flatten multi-index column names
         summary_df.columns = [
-            f"{col[0]}_{col[1]}" if col[1] else col[0]
-            for col in summary_df.columns
+            f"{col[0]}_{col[1]}" if col[1] else col[0] for col in summary_df.columns
         ]
 
         summary_csv_path = summary_dir / "benchmark_summary.csv"
@@ -392,6 +413,7 @@ def _compile_and_save_summaries(
         # Generate evaluation plots
         try:
             from scripts.generate_plots import generate_all_plots
+
             generate_all_plots(summary_csv_path, output_dir=plots_dir)
         except Exception as exc:
             logger.warning("Could not generate plots: %s", exc)
@@ -472,9 +494,15 @@ def _write_markdown_summary(summary_df: Any, md_path: Path) -> None:
 
     lines.append("")
     lines.append("## Key Observations")
-    lines.append("1. **Workload-Aware Selection** achieves strictly superior query survival rates and result retentions across budgets.")
-    lines.append("2. **Referential Sampling** preserves structural completeness but exhibits lower query survival on workload-targeted tables.")
-    lines.append("3. **Random-Repair Baseline** suffers from frequent budget exhaustion and lower retention due to arbitrary seed selection.")
+    lines.append(
+        "1. **Workload-Aware Selection** achieves strictly superior query survival rates and result retentions across budgets."
+    )
+    lines.append(
+        "2. **Referential Sampling** preserves structural completeness but exhibits lower query survival on workload-targeted tables."
+    )
+    lines.append(
+        "3. **Random-Repair Baseline** suffers from frequent budget exhaustion and lower retention due to arbitrary seed selection."
+    )
     lines.append("")
 
     with open(md_path, "w", encoding="utf-8") as f:

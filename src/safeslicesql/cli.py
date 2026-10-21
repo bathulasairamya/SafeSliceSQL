@@ -18,7 +18,6 @@ Owner: M3
 from __future__ import annotations
 
 import logging
-import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -53,7 +52,7 @@ logger = logging.getLogger("safeslicesql.cli")
 app = typer.Typer(
     name="safeslice",
     help="SafeSliceSQL — Workload-aware database subsetting with "
-         "referential integrity preservation.",
+    "referential integrity preservation.",
     add_completion=False,
 )
 
@@ -67,11 +66,14 @@ def _init(log_level: str = "INFO") -> None:
 def inspect(
     database: str = typer.Option(
         ...,
-        "--database", "-d",
+        "--database",
+        "-d",
         help="Source database name to inspect.",
     ),
     log_level: str = typer.Option(
-        "INFO", "--log-level", "-l",
+        "INFO",
+        "--log-level",
+        "-l",
         help="Logging level (DEBUG, INFO, WARNING, ERROR).",
     ),
 ) -> None:
@@ -108,20 +110,29 @@ def inspect(
     from rich.table import Table
 
     console = Console()
-    console.print(f"\n[bold green]Database Inspection Report:[/bold green] [bold cyan]{database}[/bold cyan]")
-    console.print(f"Total Tables: [bold]{len(schema.tables)}[/bold] | Total Rows (approx): [bold]{schema.total_row_count:,}[/bold]\n")
+    console.print(
+        f"\n[bold green]Database Inspection Report:[/bold green] [bold cyan]{database}[/bold cyan]"
+    )
+    console.print(
+        f"Total Tables: [bold]{len(schema.tables)}[/bold] | Total Rows (approx): [bold]{schema.total_row_count:,}[/bold]\n"
+    )
 
-    table = Table(title="Tables & Foreign Key Dependencies", show_header=True, header_style="bold magenta")
+    table = Table(
+        title="Tables & Foreign Key Dependencies", show_header=True, header_style="bold magenta"
+    )
     table.add_column("Table Name", style="cyan", no_wrap=True)
     table.add_column("Primary Key", style="green")
     table.add_column("Rows", justify="right")
     table.add_column("Outgoing Foreign Keys (Child -> Parent)", style="yellow")
 
     for tbl_name, tbl in schema.tables.items():
-        fks_str = ", ".join(
-            f"{fk.column} -> {fk.referenced_table}.{fk.referenced_column}"
-            for fk in tbl.foreign_keys
-        ) or "[dim]None[/dim]"
+        fks_str = (
+            ", ".join(
+                f"{fk.column} -> {fk.referenced_table}.{fk.referenced_column}"
+                for fk in tbl.foreign_keys
+            )
+            or "[dim]None[/dim]"
+        )
         pk_str = tbl.primary_key or "[red]None (unsupported)[/red]"
         table.add_row(tbl_name, pk_str, f"{tbl.row_count:,}", fks_str)
 
@@ -129,17 +140,21 @@ def inspect(
 
     # Topological order / Cycles
     if graph.has_cycles:
-        console.print("\n[bold red]Dependency Graph Status: CYCLES DETECTED (Unsupported in v1)[/bold red]")
+        console.print(
+            "\n[bold red]Dependency Graph Status: CYCLES DETECTED (Unsupported in v1)[/bold red]"
+        )
         for cycle in graph.cycles():
             console.print(f"  [red]Cycle:[/red] {' -> '.join(cycle)}")
     else:
         order = graph.topological_order()
-        console.print(f"\n[bold green]Safe Insertion Order (Parents -> Children):[/bold green]")
+        console.print("\n[bold green]Safe Insertion Order (Parents -> Children):[/bold green]")
         console.print(f"  {' -> '.join(order)}")
 
     # Unsupported features
     if schema.unsupported_features:
-        console.print(f"\n[bold yellow]Unsupported Schema Features Detected ({len(schema.unsupported_features)}):[/bold yellow]")
+        console.print(
+            f"\n[bold yellow]Unsupported Schema Features Detected ({len(schema.unsupported_features)}):[/bold yellow]"
+        )
         for feat in schema.unsupported_features:
             console.print(f"  [yellow]- {feat}[/yellow]")
     else:
@@ -151,22 +166,26 @@ def inspect(
 def run(
     method: str = typer.Option(
         ...,
-        "--method", "-m",
+        "--method",
+        "-m",
         help="Selection method: random-repair, referential, or workload-aware.",
     ),
     budget_percent: int = typer.Option(
         ...,
-        "--budget-percent", "-b",
+        "--budget-percent",
+        "-b",
         help="Row budget as a percentage of total source rows (e.g., 20).",
     ),
     seed: int = typer.Option(
         42,
-        "--seed", "-s",
+        "--seed",
+        "-s",
         help="Random seed for reproducibility.",
     ),
     workload: str = typer.Option(
         "workloads/workload.sql",
-        "--workload", "-w",
+        "--workload",
+        "-w",
         help="Path to the SQL workload file.",
     ),
     source: Optional[str] = typer.Option(
@@ -181,7 +200,8 @@ def run(
     ),
     output_dir: str = typer.Option(
         "results",
-        "--output-dir", "-o",
+        "--output-dir",
+        "-o",
         help="Directory to save CSV run results.",
     ),
     dry_run: bool = typer.Option(
@@ -190,7 +210,9 @@ def run(
         help="Simulate selection without materializing into target database.",
     ),
     log_level: str = typer.Option(
-        "INFO", "--log-level", "-l",
+        "INFO",
+        "--log-level",
+        "-l",
         help="Logging level.",
     ),
 ) -> None:
@@ -200,23 +222,24 @@ def run(
     valid_methods = ("random-repair", "referential", "workload-aware")
     if method not in valid_methods:
         typer.echo(
-            f"[error] Unknown method '{method}'. "
-            f"Valid methods: {', '.join(valid_methods)}",
+            f"[error] Unknown method '{method}'. Valid methods: {', '.join(valid_methods)}",
             err=True,
         )
         raise typer.Exit(code=2)
 
     if not (1 <= budget_percent <= 100):
         typer.echo(
-            f"[error] budget-percent must be between 1 and 100, "
-            f"got {budget_percent}.",
+            f"[error] budget-percent must be between 1 and 100, got {budget_percent}.",
             err=True,
         )
         raise typer.Exit(code=2)
 
     logger.info(
         "Starting SafeSlice run: method=%s, budget=%d%%, seed=%d, workload=%s",
-        method, budget_percent, seed, workload,
+        method,
+        budget_percent,
+        seed,
+        workload,
     )
 
     try:
@@ -265,13 +288,20 @@ def run(
             raise typer.Exit(code=1)
 
         if graph.has_cycles:
-            typer.echo("[error] Cyclic foreign-key dependencies detected. Unsupported in v1.", err=True)
+            typer.echo(
+                "[error] Cyclic foreign-key dependencies detected. Unsupported in v1.", err=True
+            )
             raise typer.Exit(code=1)
 
         # 2. Compute budget
         total_source_rows = schema.total_row_count
         budget = max(1, int(total_source_rows * (budget_percent / 100.0)))
-        logger.info("Total source rows: %d, Target budget: %d rows (%d%%)", total_source_rows, budget, budget_percent)
+        logger.info(
+            "Total source rows: %d, Target budget: %d rows (%d%%)",
+            total_source_rows,
+            budget,
+            budget_percent,
+        )
 
         # 3. Workload Analysis
         workload_path = Path(workload)
@@ -279,8 +309,11 @@ def run(
         if workload_path.exists():
             try:
                 workload_analysis = analyze_workload(workload_path, engine=source_engine)
-                logger.info("Parsed workload with %d queries (%d supported)",
-                            len(workload_analysis.queries), len(workload_analysis.supported_queries))
+                logger.info(
+                    "Parsed workload with %d queries (%d supported)",
+                    len(workload_analysis.queries),
+                    len(workload_analysis.supported_queries),
+                )
             except Exception as exc:
                 logger.warning("Workload analysis failed: %s", exc)
 
@@ -304,7 +337,9 @@ def run(
         print_selection_summary(selection)
 
         if dry_run:
-            typer.echo("[dry-run] Dry-run requested. Materialization and target validation skipped.")
+            typer.echo(
+                "[dry-run] Dry-run requested. Materialization and target validation skipped."
+            )
             return
 
         # 5. Materialization
@@ -385,7 +420,7 @@ def run(
             typer.echo("[error] Validation checks failed.", err=True)
             raise typer.Exit(code=1)
 
-        typer.echo(f"[run] SafeSlice completed successfully.")
+        typer.echo("[run] SafeSlice completed successfully.")
     finally:
         source_engine.dispose()
         target_engine.dispose()
@@ -410,11 +445,14 @@ def validate(
     ),
     workload: Optional[str] = typer.Option(
         None,
-        "--workload", "-w",
+        "--workload",
+        "-w",
         help="Optional workload file path to evaluate retention metrics.",
     ),
     log_level: str = typer.Option(
-        "INFO", "--log-level", "-l",
+        "INFO",
+        "--log-level",
+        "-l",
         help="Logging level.",
     ),
 ) -> None:
@@ -477,11 +515,14 @@ def validate(
 def benchmark(
     config: str = typer.Option(
         "benchmarks/benchmarks.yaml",
-        "--config", "-c",
+        "--config",
+        "-c",
         help="Path to the benchmark YAML configuration file.",
     ),
     log_level: str = typer.Option(
-        "INFO", "--log-level", "-l",
+        "INFO",
+        "--log-level",
+        "-l",
         help="Logging level.",
     ),
 ) -> None:
@@ -491,6 +532,7 @@ def benchmark(
 
     try:
         from safeslicesql.benchmark import run_benchmark
+
         run_benchmark(config)
     except NotImplementedError:
         typer.echo("[benchmark] Phase 8 benchmark runner is being prepared.", err=True)

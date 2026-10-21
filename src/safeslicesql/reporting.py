@@ -11,13 +11,10 @@ from __future__ import annotations
 
 import csv
 import logging
-import os
-import time
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 from safeslicesql.types import (
@@ -110,28 +107,39 @@ def save_run_results_csv(
     if wl and wl.per_query_results:
         queries_file = out_path / f"queries_{run_result.run_id}.csv"
         query_fields = [
-            "query_id", "survived", "source_row_count", "target_row_count",
-            "key_retention", "result_row_retention", "aggregate_retention",
-            "execution_time_source", "execution_time_target", "excluded", "exclusion_reason", "error"
+            "query_id",
+            "survived",
+            "source_row_count",
+            "target_row_count",
+            "key_retention",
+            "result_row_retention",
+            "aggregate_retention",
+            "execution_time_source",
+            "execution_time_target",
+            "excluded",
+            "exclusion_reason",
+            "error",
         ]
         with open(queries_file, mode="w", newline="", encoding="utf-8") as qf:
             q_writer = csv.DictWriter(qf, fieldnames=query_fields)
             q_writer.writeheader()
             for q in wl.per_query_results:
-                q_writer.writerow({
-                    "query_id": q.query_id,
-                    "survived": q.survived,
-                    "source_row_count": q.source_row_count,
-                    "target_row_count": q.target_row_count,
-                    "key_retention": q.key_retention,
-                    "result_row_retention": q.result_row_retention,
-                    "aggregate_retention": q.aggregate_retention,
-                    "execution_time_source": q.execution_time_source,
-                    "execution_time_target": q.execution_time_target,
-                    "excluded": q.excluded,
-                    "exclusion_reason": q.exclusion_reason,
-                    "error": q.error,
-                })
+                q_writer.writerow(
+                    {
+                        "query_id": q.query_id,
+                        "survived": q.survived,
+                        "source_row_count": q.source_row_count,
+                        "target_row_count": q.target_row_count,
+                        "key_retention": q.key_retention,
+                        "result_row_retention": q.result_row_retention,
+                        "aggregate_retention": q.aggregate_retention,
+                        "execution_time_source": q.execution_time_source,
+                        "execution_time_target": q.execution_time_target,
+                        "excluded": q.excluded,
+                        "exclusion_reason": q.exclusion_reason,
+                        "error": q.error,
+                    }
+                )
 
     logger.info("Saved run results to %s", csv_file)
     return csv_file
@@ -142,7 +150,9 @@ def print_validation_summary(report: ValidationReport) -> None:
     status_style = "bold green" if report.is_valid else "bold red"
     status_text = "PASSED" if report.is_valid else "FAILED"
 
-    console.print(f"\n[bold]Subset Validation Summary:[/bold] [{status_style}]{status_text}[/{status_style}]\n")
+    console.print(
+        f"\n[bold]Subset Validation Summary:[/bold] [{status_style}]{status_text}[/{status_style}]\n"
+    )
 
     table = Table(title="Validation Checks", show_header=True, header_style="bold cyan")
     table.add_column("Check", style="white")
@@ -157,7 +167,9 @@ def print_validation_summary(report: ValidationReport) -> None:
     table.add_row(
         "Primary Key Uniqueness",
         "[green]PASS[/green]" if report.pk_unique else "[red]FAIL[/red]",
-        "Zero duplicate primary keys found across all tables" if report.pk_unique else "Duplicate PKs detected",
+        "Zero duplicate primary keys found across all tables"
+        if report.pk_unique
+        else "Duplicate PKs detected",
     )
     table.add_row(
         "Foreign Key Integrity",
@@ -167,12 +179,16 @@ def print_validation_summary(report: ValidationReport) -> None:
     table.add_row(
         "Schema Compatibility",
         "[green]PASS[/green]" if report.schema_compatible else "[red]FAIL[/red]",
-        "All source tables and columns reproduced on target" if report.schema_compatible else f"Missing: {report.tables_missing}",
+        "All source tables and columns reproduced on target"
+        if report.schema_compatible
+        else f"Missing: {report.tables_missing}",
     )
     table.add_row(
         "Source Immutability",
         "[green]PASS[/green]" if report.source_unchanged else "[red]FAIL[/red]",
-        "Source database verified unchanged" if report.source_unchanged else "Source database altered",
+        "Source database verified unchanged"
+        if report.source_unchanged
+        else "Source database altered",
     )
 
     console.print(table)
@@ -206,7 +222,9 @@ def print_workload_summary(report: WorkloadReport) -> None:
     )
 
     if report.per_query_results:
-        table = Table(title="Per-Query Retention Metrics", show_header=True, header_style="bold magenta")
+        table = Table(
+            title="Per-Query Retention Metrics", show_header=True, header_style="bold magenta"
+        )
         table.add_column("Query ID", style="cyan", no_wrap=True)
         table.add_column("Survived", justify="center")
         table.add_column("Source Rows", justify="right")
@@ -258,7 +276,9 @@ def print_workload_summary(report: WorkloadReport) -> None:
 
 def print_selection_summary(result: SelectionResult) -> None:
     """Print a human-readable selection summary."""
-    console.print(f"\n[bold green]Selection Complete:[/bold green] Method=[bold]{result.method}[/bold] | Seed=[bold]{result.seed}[/bold]")
+    console.print(
+        f"\n[bold green]Selection Complete:[/bold green] Method=[bold]{result.method}[/bold] | Seed=[bold]{result.seed}[/bold]"
+    )
     console.print(
         f"Total Selected: [bold]{result.total_selected:,}[/bold] / Budget: [bold]{result.budget:,}[/bold] "
         f"(Closure Additions: {result.closure_additions:,}, Rejected Candidates: {result.rejected_candidates:,})\n"
@@ -280,11 +300,19 @@ def print_generation_summary(result: GenerationResult) -> None:
     status_color = "green" if result.success else "red"
     status_text = "SUCCESS" if result.success else "FAILED"
 
-    console.print(f"\n[bold]Subset Materialization:[/bold] [{status_color}]{status_text}[/{status_color}]")
-    console.print(f"Target Database: [bold cyan]{result.target_database}[/bold cyan] | Total Rows Inserted: [bold]{result.total_rows_inserted:,}[/bold]\n")
+    console.print(
+        f"\n[bold]Subset Materialization:[/bold] [{status_color}]{status_text}[/{status_color}]"
+    )
+    console.print(
+        f"Target Database: [bold cyan]{result.target_database}[/bold cyan] | Total Rows Inserted: [bold]{result.total_rows_inserted:,}[/bold]\n"
+    )
 
     if result.insertion_order:
-        table = Table(title="Materialized Tables & Insertion Order", show_header=True, header_style="bold blue")
+        table = Table(
+            title="Materialized Tables & Insertion Order",
+            show_header=True,
+            header_style="bold blue",
+        )
         table.add_column("Order", justify="center", style="dim")
         table.add_column("Table Name", style="cyan")
         table.add_column("Rows Inserted", justify="right")
@@ -298,4 +326,3 @@ def print_generation_summary(result: GenerationResult) -> None:
     if not result.success and result.error_message:
         console.print(f"\n[bold red]Materialization Error:[/bold red] {result.error_message}")
     console.print("")
-

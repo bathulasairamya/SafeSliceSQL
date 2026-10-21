@@ -71,7 +71,9 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
     """Normalize row dictionaries into tuples for comparison while preserving values."""
     normalized: list[tuple[Any, ...]] = []
     for row in rows:
-        normalized.append(tuple(sorted((k, str(v) if v is not None else None) for k, v in row.items())))
+        normalized.append(
+            tuple(sorted((k, str(v) if v is not None else None) for k, v in row.items()))
+        )
     return normalized
 
 
@@ -162,9 +164,7 @@ def validate_subset(
             not_null_conds = " AND ".join(
                 f"c.{_quote_ident(c_col)} IS NOT NULL" for c_col in c_cols
             )
-            null_parent_conds = " AND ".join(
-                f"p.{_quote_ident(p_col)} IS NULL" for p_col in p_cols
-            )
+            null_parent_conds = " AND ".join(f"p.{_quote_ident(p_col)} IS NULL" for p_col in p_cols)
 
             check_sql = (
                 f"SELECT COUNT(*) FROM {child_q} c "
@@ -180,12 +180,14 @@ def validate_subset(
                             f"{orphans} orphaned row(s) in '{child_table}' referencing '{parent_table}'"
                         )
                 except Exception as exc:
-                    logger.debug("FK check between %s -> %s failed: %s", child_table, parent_table, exc)
+                    logger.debug(
+                        "FK check between %s -> %s failed: %s", child_table, parent_table, exc
+                    )
 
     if initial_source_row_count is not None:
-        source_unchanged = (source_total == initial_source_row_count)
+        source_unchanged = source_total == initial_source_row_count
     else:
-        source_unchanged = (source_total == sum(_row_count(source_engine, t) for t in source_tables))
+        source_unchanged = source_total == sum(_row_count(source_engine, t) for t in source_tables)
 
     report = ValidationReport(
         pk_unique=pk_unique,
@@ -204,9 +206,13 @@ def validate_subset(
     if not report.pk_unique:
         report.errors.append("Target table primary keys are not unique.")
     if report.fk_violations > 0:
-        report.errors.append(f"Target table contains {report.fk_violations} foreign-key violation(s).")
+        report.errors.append(
+            f"Target table contains {report.fk_violations} foreign-key violation(s)."
+        )
     if not report.budget_compliant:
-        report.errors.append(f"Target row count ({actual_rows}) exceeds the budget limit ({budget_limit}).")
+        report.errors.append(
+            f"Target row count ({actual_rows}) exceeds the budget limit ({budget_limit})."
+        )
     if report.tables_missing:
         report.errors.append(f"Missing expected tables: {report.tables_missing}")
     if not report.schema_compatible:
@@ -275,7 +281,8 @@ def evaluate_workload(
 
                 # Key retention: match on ID/key columns if present, otherwise common rows
                 key_cols = [
-                    k for k in source_rows[0].keys()
+                    k
+                    for k in source_rows[0].keys()
                     if k.lower() in ("id", "emp_no", "dept_no", "pk", "key", "code")
                     or k.lower().endswith(("_id", "_no", "_code", "_key", "_pk"))
                 ]
@@ -292,14 +299,24 @@ def evaluate_workload(
                     if not group_col_names and source_rows:
                         # Fallback to non-aggregate output columns
                         group_col_names = [
-                            k for k in source_rows[0].keys()
-                            if not any(agg.lower() in k.lower() for agg in ("count", "sum", "avg", "min", "max", "cnt"))
+                            k
+                            for k in source_rows[0].keys()
+                            if not any(
+                                agg.lower() in k.lower()
+                                for agg in ("count", "sum", "avg", "min", "max", "cnt")
+                            )
                         ]
 
                     if group_col_names:
-                        src_groups = {tuple(str(r.get(c)) for c in group_col_names) for r in source_rows}
-                        tgt_groups = {tuple(str(r.get(c)) for c in group_col_names) for r in target_rows}
-                        aggregate_retention = len(src_groups & tgt_groups) / len(src_groups) if src_groups else 0.0
+                        src_groups = {
+                            tuple(str(r.get(c)) for c in group_col_names) for r in source_rows
+                        }
+                        tgt_groups = {
+                            tuple(str(r.get(c)) for c in group_col_names) for r in target_rows
+                        }
+                        aggregate_retention = (
+                            len(src_groups & tgt_groups) / len(src_groups) if src_groups else 0.0
+                        )
                     else:
                         aggregate_retention = 1.0 if target_rows else 0.0
                 else:
@@ -335,7 +352,9 @@ def evaluate_workload(
     total_queries = len(per_query_results)
     supported_queries = sum(1 for q in per_query_results if not q.excluded)
     excluded_queries = total_queries - supported_queries
-    source_nonempty_queries = sum(1 for q in per_query_results if not q.excluded and q.source_row_count > 0)
+    source_nonempty_queries = sum(
+        1 for q in per_query_results if not q.excluded and q.source_row_count > 0
+    )
 
     return WorkloadReport(
         per_query_results=per_query_results,
@@ -343,8 +362,25 @@ def evaluate_workload(
         supported_queries=supported_queries,
         excluded_queries=excluded_queries,
         source_nonempty_queries=source_nonempty_queries,
-        query_survival_rate=(sum(1 for q in per_query_results if not q.excluded and q.survived) / supported_queries) if supported_queries else 0.0,
-        overall_key_retention=sum(q.key_retention for q in per_query_results if not q.excluded) / supported_queries if supported_queries else 0.0,
-        overall_result_retention=sum(q.result_row_retention for q in per_query_results if not q.excluded) / supported_queries if supported_queries else 0.0,
-        overall_aggregate_retention=sum(q.aggregate_retention for q in per_query_results if not q.excluded) / supported_queries if supported_queries else 0.0,
+        query_survival_rate=(
+            sum(1 for q in per_query_results if not q.excluded and q.survived) / supported_queries
+        )
+        if supported_queries
+        else 0.0,
+        overall_key_retention=sum(q.key_retention for q in per_query_results if not q.excluded)
+        / supported_queries
+        if supported_queries
+        else 0.0,
+        overall_result_retention=sum(
+            q.result_row_retention for q in per_query_results if not q.excluded
+        )
+        / supported_queries
+        if supported_queries
+        else 0.0,
+        overall_aggregate_retention=sum(
+            q.aggregate_retention for q in per_query_results if not q.excluded
+        )
+        / supported_queries
+        if supported_queries
+        else 0.0,
     )

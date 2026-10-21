@@ -15,15 +15,17 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-import sys
 
 logger = logging.getLogger("safeslicesql.plots")
 
 
-def generate_all_plots(summary_csv: str | Path, output_dir: str | Path = "results/plots") -> list[Path]:
+def generate_all_plots(
+    summary_csv: str | Path, output_dir: str | Path = "results/plots"
+) -> list[Path]:
     """Generate all benchmark evaluation plots from summary CSV data."""
     try:
         import matplotlib
+
         matplotlib.use("Agg")  # Headless backend
         import matplotlib.pyplot as plt
         import pandas as pd
@@ -47,24 +49,28 @@ def generate_all_plots(summary_csv: str | Path, output_dir: str | Path = "result
         return []
 
     # Configure global styling
-    plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
-    plt.rcParams.update({
-        "font.family": "sans-serif",
-        "font.size": 11,
-        "axes.titlesize": 13,
-        "axes.titleweight": "bold",
-        "axes.labelsize": 12,
-        "axes.labelweight": "semibold",
-        "figure.titlesize": 14,
-        "figure.titleweight": "bold",
-        "legend.fontsize": 10,
-        "figure.autolayout": True,
-    })
+    plt.style.use(
+        "seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default"
+    )
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.size": 11,
+            "axes.titlesize": 13,
+            "axes.titleweight": "bold",
+            "axes.labelsize": 12,
+            "axes.labelweight": "semibold",
+            "figure.titlesize": 14,
+            "figure.titleweight": "bold",
+            "legend.fontsize": 10,
+            "figure.autolayout": True,
+        }
+    )
 
     method_palette = {
         "workload-aware": "#1D4ED8",  # Royal Blue
-        "referential": "#059669",     # Emerald Green
-        "random-repair": "#D97706",   # Amber / Orange
+        "referential": "#059669",  # Emerald Green
+        "random-repair": "#D97706",  # Amber / Orange
     }
     method_markers = {
         "workload-aware": "o",
@@ -77,13 +83,19 @@ def generate_all_plots(summary_csv: str | Path, output_dir: str | Path = "result
         logger.warning("CSV missing required columns 'budget_percent' or 'method'")
         return []
 
-    methods = [m for m in ["workload-aware", "referential", "random-repair"] if m in df["method"].unique()]
+    methods = [
+        m for m in ["workload-aware", "referential", "random-repair"] if m in df["method"].unique()
+    ]
     if not methods:
         methods = list(df["method"].unique())
 
     # 1. Plot Query Survival Rate vs Budget
     if "query_survival_rate_mean" in df.columns or "query_survival_rate" in df.columns:
-        col = "query_survival_rate_mean" if "query_survival_rate_mean" in df.columns else "query_survival_rate"
+        col = (
+            "query_survival_rate_mean"
+            if "query_survival_rate_mean" in df.columns
+            else "query_survival_rate"
+        )
         fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
         for m in methods:
             sub = df[df["method"] == m].sort_values("budget_percent")
@@ -148,7 +160,9 @@ def generate_all_plots(summary_csv: str | Path, output_dir: str | Path = "result
     generated_files.append(p2)
 
     # 3. Closure Overhead & Total Selected Rows
-    closure_col = "closure_additions_mean" if "closure_additions_mean" in df.columns else "closure_additions"
+    closure_col = (
+        "closure_additions_mean" if "closure_additions_mean" in df.columns else "closure_additions"
+    )
     if closure_col in df.columns:
         fig, ax = plt.subplots(figsize=(7.5, 5), dpi=300)
         budgets = sorted(df["budget_percent"].unique())
@@ -183,7 +197,11 @@ def generate_all_plots(summary_csv: str | Path, output_dir: str | Path = "result
     # 4. Runtime / Performance Comparison
     runtime_col = "total_runtime_mean" if "total_runtime_mean" in df.columns else "total_runtime"
     if runtime_col not in df.columns:
-        runtime_col = "runtime_selection_mean" if "runtime_selection_mean" in df.columns else "runtime_selection"
+        runtime_col = (
+            "runtime_selection_mean"
+            if "runtime_selection_mean" in df.columns
+            else "runtime_selection"
+        )
 
     if runtime_col in df.columns:
         fig, ax = plt.subplots(figsize=(7.5, 5), dpi=300)
@@ -222,9 +240,14 @@ def generate_all_plots(summary_csv: str | Path, output_dir: str | Path = "result
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Generate SafeSliceSQL benchmark evaluation plots.")
+
+    parser = argparse.ArgumentParser(
+        description="Generate SafeSliceSQL benchmark evaluation plots."
+    )
     parser.add_argument("summary_csv", help="Path to summary CSV file")
-    parser.add_argument("-o", "--output-dir", default="results/plots", help="Directory to save generated plots")
+    parser.add_argument(
+        "-o", "--output-dir", default="results/plots", help="Directory to save generated plots"
+    )
     args = parser.parse_args()
 
     plots = generate_all_plots(args.summary_csv, args.output_dir)

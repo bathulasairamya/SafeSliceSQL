@@ -14,7 +14,6 @@ Owner: M1
 
 from __future__ import annotations
 
-import collections
 import logging
 from typing import Any, Callable
 
@@ -269,12 +268,16 @@ def _resolve_fks_batch(
                             conds = []
                             params = {}
                             for idx, pk_tup in enumerate(batch):
-                                tup_vals = pk_tup if isinstance(pk_tup, (tuple, list)) else (pk_tup,)
+                                tup_vals = (
+                                    pk_tup if isinstance(pk_tup, (tuple, list)) else (pk_tup,)
+                                )
                                 sub_conds = []
                                 for c_idx, col in enumerate(pk_columns):
                                     p_name = f"pk_{idx}_{c_idx}"
                                     sub_conds.append(f"{_quote_ident(col)} = :{p_name}")
-                                    params[p_name] = tup_vals[c_idx] if c_idx < len(tup_vals) else None
+                                    params[p_name] = (
+                                        tup_vals[c_idx] if c_idx < len(tup_vals) else None
+                                    )
                                 conds.append(f"({' AND '.join(sub_conds)})")
 
                             where_clause = " OR ".join(conds)
@@ -307,9 +310,11 @@ def _resolve_fks_batch(
             except Exception as exc:
                 logger.error(
                     "Database error while batch querying FKs on table '%s': %s",
-                    table_name, exc,
+                    table_name,
+                    exc,
                 )
                 from safeslicesql.types import DatabaseResolutionError
+
                 raise DatabaseResolutionError(
                     f"Failed to query foreign keys on table '{table_name}': {exc}"
                 ) from exc
@@ -377,9 +382,7 @@ def compute_closure(
     ClosureResult
         The expanded selection including all required parent rows.
     """
-    current_selection: dict[str, set[Any]] = {
-        table: set(pks) for table, pks in selected.items()
-    }
+    current_selection: dict[str, set[Any]] = {table: set(pks) for table, pks in selected.items()}
     for table_name in graph.schema.tables:
         current_selection.setdefault(table_name, set())
 
@@ -388,9 +391,7 @@ def compute_closure(
     }
 
     # Track inspected rows: table -> set of PKs whose outgoing FKs have been resolved
-    inspected_rows: dict[str, set[Any]] = {
-        table_name: set() for table_name in graph.schema.tables
-    }
+    inspected_rows: dict[str, set[Any]] = {table_name: set() for table_name in graph.schema.tables}
 
     while True:
         # Collect all rows across tables that need FK inspection
@@ -453,7 +454,9 @@ def compute_closure(
         )
         logger.debug(
             "Closure infeasible: budget=%d, total_rows=%d, additions=%d",
-            budget, total_rows, total_additions,
+            budget,
+            total_rows,
+            total_additions,
         )
 
     return ClosureResult(

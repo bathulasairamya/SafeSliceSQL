@@ -127,11 +127,44 @@ def load_workload(workload_path: str | Path) -> list[str]:
 
 
 SQL_KEYWORDS = {
-    "WHERE", "JOIN", "ON", "INNER", "LEFT", "RIGHT", "CROSS", "NATURAL",
-    "GROUP", "ORDER", "HAVING", "LIMIT", "SET", "USING", "AS", "BY",
-    "AND", "OR", "NOT", "IN", "IS", "NULL", "LIKE", "BETWEEN", "SELECT",
-    "FROM", "ASC", "DESC", "DISTINCT", "ALL", "EXISTS", "CASE", "WHEN",
-    "THEN", "ELSE", "END", "TRUE", "FALSE"
+    "WHERE",
+    "JOIN",
+    "ON",
+    "INNER",
+    "LEFT",
+    "RIGHT",
+    "CROSS",
+    "NATURAL",
+    "GROUP",
+    "ORDER",
+    "HAVING",
+    "LIMIT",
+    "SET",
+    "USING",
+    "AS",
+    "BY",
+    "AND",
+    "OR",
+    "NOT",
+    "IN",
+    "IS",
+    "NULL",
+    "LIKE",
+    "BETWEEN",
+    "SELECT",
+    "FROM",
+    "ASC",
+    "DESC",
+    "DISTINCT",
+    "ALL",
+    "EXISTS",
+    "CASE",
+    "WHEN",
+    "THEN",
+    "ELSE",
+    "END",
+    "TRUE",
+    "FALSE",
 }
 
 
@@ -171,7 +204,9 @@ def _extract_tables_and_aliases(sql: str) -> tuple[list[str], dict[str, str]]:
     return table_names, alias_map
 
 
-def _extract_join_pairs(sql: str, tables: list[str], alias_map: dict[str, str]) -> list[tuple[str, str]]:
+def _extract_join_pairs(
+    sql: str, tables: list[str], alias_map: dict[str, str]
+) -> list[tuple[str, str]]:
     """Return pairs of tables joined in the query."""
     join_pairs: list[tuple[str, str]] = []
 
@@ -269,15 +304,18 @@ def _is_supported_query(raw_sql: str) -> tuple[bool, str]:
         return False, "Only SELECT statements are supported"
 
     disallowed_pattern = re.compile(
-        r'\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|REPLACE'
-        r'|MERGE|UNION|WINDOW|ROW_NUMBER|RANK|DENSE_RANK)\b'
-        r'|(?:\bWITH\b\s+\w+\s+AS\b)',
+        r"\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|REPLACE"
+        r"|MERGE|UNION|WINDOW|ROW_NUMBER|RANK|DENSE_RANK)\b"
+        r"|(?:\bWITH\b\s+\w+\s+AS\b)",
         re.IGNORECASE,
     )
     if disallowed_pattern.search(upper):
         return False, "Unsupported SQL pattern or clause"
 
-    if re.search(r"\bLEFT\s+(?:OUTER\s+)?JOIN\b|\bRIGHT\s+(?:OUTER\s+)?JOIN\b|\bFULL\s+(?:OUTER\s+)?JOIN\b", upper):
+    if re.search(
+        r"\bLEFT\s+(?:OUTER\s+)?JOIN\b|\bRIGHT\s+(?:OUTER\s+)?JOIN\b|\bFULL\s+(?:OUTER\s+)?JOIN\b",
+        upper,
+    ):
         return False, "LEFT/RIGHT/FULL OUTER JOIN not supported in v1"
 
     if re.search(r"\b(?:FROM|JOIN)\b", upper) is None:
