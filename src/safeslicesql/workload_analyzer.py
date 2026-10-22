@@ -344,6 +344,14 @@ def analyze_workload(
     analysis = WorkloadAnalysis()
     analysis.workload_path = str(workload_path)
 
+    available_tables: set[str] | None = None
+    if engine is not None and hasattr(engine, "connect"):
+        try:
+            insp = sa.inspect(engine)
+            available_tables = set(insp.get_table_names())
+        except Exception:
+            available_tables = None
+
     for index, sql in enumerate(load_workload(workload_path), start=1):
         query = QueryInfo(f"Q{index}", sql)
         cleaned = re.sub(r"--.*?$", "", sql, flags=re.MULTILINE)
@@ -365,6 +373,21 @@ def analyze_workload(
         is_supported, reason = _is_supported_query(cleaned)
         query.is_supported = is_supported
         query.exclusion_reason = reason
+
+        if available_tables is not None and query.tables:
+            missing_tables = [t for t in query.tables if t not in available_tables]
+            if missing_tables:
+                db_name = getattr(engine.url, "database", "source") if hasattr(engine, "url") else "source"
+                logger.info(
+                    "Skipping query %s: table(s) %s do not exist in database '%s'",
+                    query.query_id,
+                    missing_tables,
+                    db_name,
+                )
+                query.is_supported = False
+                query.exclusion_reason = f"Table(s) {missing_tables} not in database"
+                analysis.queries.append(query)
+                continue
 
         if engine is not None and hasattr(engine, "connect"):
             try:

@@ -66,26 +66,11 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
         "Discovered %d tables in database '%s': %s", len(table_names), db_name, table_names
     )
 
-    # Pre-fetch row counts using a single connection (fast INFORMATION_SCHEMA on MySQL)
+    # Fetch exact row counts using a single connection
     table_row_counts: dict[str, int] = {}
     try:
         with engine.connect() as conn:
-            if engine.dialect.name == "mysql":
-                try:
-                    stmt = sa.text(
-                        "SELECT TABLE_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES "
-                        "WHERE TABLE_SCHEMA = :db"
-                    )
-                    rows_result = conn.execute(stmt, {"db": db_name})
-                    for r_table, r_count in rows_result:
-                        if r_count is not None:
-                            table_row_counts[r_table] = int(r_count)
-                except Exception as exc:
-                    logger.debug("Could not query INFORMATION_SCHEMA.TABLES: %s", exc)
-
             for table_name in table_names:
-                if table_name in table_row_counts:
-                    continue
                 try:
                     res = conn.execute(sa.text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}"))
                     table_row_counts[table_name] = res.scalar() or 0

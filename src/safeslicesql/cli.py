@@ -306,6 +306,12 @@ def run(
 
         # 3. Workload Analysis
         workload_path = Path(workload)
+        if workload == "workloads/workload.sql" and config.source_db.database:
+            specific_workload = Path(f"workloads/{config.source_db.database}_workload.sql")
+            if specific_workload.exists():
+                workload_path = specific_workload
+                logger.info("Using source-specific workload file: %s", specific_workload)
+
         workload_analysis = None
         if workload_path.exists():
             try:
