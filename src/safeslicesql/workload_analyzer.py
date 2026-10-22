@@ -16,6 +16,7 @@ import logging
 import re
 from pathlib import Path
 
+import sqlalchemy as sa
 from sqlalchemy import Engine, text
 
 logger = logging.getLogger("safeslicesql.workload_analyzer")
