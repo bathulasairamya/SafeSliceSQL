@@ -1,0 +1,29 @@
+# SafeSliceSQL Benchmark Configuration for MySQL 'world'
+# Defines the multi-run experiment matrix across methods, budgets, and seeds.
+
+benchmark:
+  name: "world_benchmark_eval"
+  description: "Comparative evaluation across random-repair, referential, and workload-aware sampling on MySQL world."
+
+# Source & target database engines will automatically load from .env
+
+matrix:
+  methods:
+    - "random-repair"
+    - "referential"
+    - "workload-aware"
+  budget_percents:
+    - 10
+    - 20
+    - 30
+  seeds:
+    - 42
+    - 123
+
+workload:
+  path: "workloads/world_workload.sql"
+
+output:
+  raw_dir: "results/raw"
+  summary_dir: "results/summaries"
+  plots_dir: "results/plots"
