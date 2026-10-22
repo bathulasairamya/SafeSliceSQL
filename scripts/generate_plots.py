@@ -59,7 +59,7 @@ def generate_all_plots(
             "axes.titlesize": 13,
             "axes.titleweight": "bold",
             "axes.labelsize": 12,
-            "axes.labelweight": "semibold",
+            "axes.labelweight": "bold",
             "figure.titlesize": 14,
             "figure.titleweight": "bold",
             "legend.fontsize": 10,
