@@ -213,18 +213,13 @@ This enables the workload-aware heuristic to prioritize candidate rows that are 
 
 ### Workload-aware Greedy Selection
 
-Uses a score function of the form:
+The current implementation builds workload-related table weights from supported query features, then scores candidate rows using the table weight divided by the candidate's standalone dependency-closure size. During selection it checks incremental closure cost against already selected rows. This is a heuristic; it is not an exact row-level marginal query-result calculation.
 
 ```text
-score(c | S) = ΔV(c | S) / max(1, ΔD(c | S))
+score(candidate) = workload_table_weight / max(1, standalone_dependency_closure_rows)
 ```
 
-Where:
-
-- ΔV(c | S) is the marginal workload-retention value of candidate c
-- ΔD(c | S) is the additional dependency cost required to include c
-
-This provides a transparent heuristic for balancing workload relevance against dependency expansion.
+This provides a transparent heuristic for balancing workload-relevant tables against dependency expansion. It does not guarantee a globally optimal subset.
 
 ## Validation and Evaluation
 
@@ -263,6 +258,202 @@ python -m safeslicesql.cli benchmark --config benchmarks\benchmarks_mysql.yaml
 ```
 
 The benchmark reuses and recreates tables in its configured target database across experiments. Its raw run CSVs, summary CSV/Markdown files, and plots are written to the configured raw, summary, and plot directories.
+
+## Complete setup and 1% experiment reproduction (Windows)
+
+This guide reproduces the three implemented methods against the MySQL Employees sample database. Commands marked **PowerShell** belong in the VS Code terminal; commands marked **MySQL SQL** belong in MySQL Workbench or a MySQL client. Do not paste SQL statements into PowerShell.
+
+### Experiment configuration
+
+| Setting | Value |
+|---|---|
+| Project directory | `C:\safeslicesql` |
+| Python environment | `env` (if created with this name) |
+| Python version | `>=3.10` (as declared in `pyproject.toml`) |
+| MySQL host / port | `localhost` / `3306` |
+| MySQL user | `root` in the local example; change if needed |
+| Source database | `employees` |
+| Budget / seed | `1%` / `42` |
+| Methods | `random-repair`, `referential`, `workload-aware` |
+
+The 1% budget is calculated from the **total rows across all source tables**, not 1% of the `employees` table alone. In the recorded run the source contained 3,919,015 total rows, giving a 39,190-row budget. Dependency rows are included in this total.
+
+### 1. Open the repository and activate the virtual environment
+
+**PowerShell — VS Code terminal:**
+
+```powershell
+cd C:\safeslicesql
+code .
+```
+
+Open a PowerShell integrated terminal. If your virtual environment is named `env`, activate it:
+
+```powershell
+.\env\Scripts\Activate.ps1
+```
+
+If PowerShell blocks activation, allow scripts for this process only and retry:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\env\Scripts\Activate.ps1
+```
+
+Check the active interpreter. Python 3.10 or newer is supported; the interpreter path should point into this repository's `env` directory when using that environment.
+
+```powershell
+python --version
+python -c "import sys; print(sys.executable)"
+```
+
+### 2. Install and check SafeSliceSQL
+
+**PowerShell:**
+
+```powershell
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
+python -c "import safeslicesql; print('SafeSliceSQL imported successfully')"
+python -m safeslicesql.cli --help
+python -m safeslicesql.cli run --help
+```
+
+The run command accepts these method names: `random-repair`, `referential`, and `workload-aware`. The workload option is `--workload` and defaults to `workloads/workload.sql`.
+
+### 3. Check MySQL and the Employees source database
+
+Connect to your local server in **MySQL Workbench** (host `localhost`, port `3306`) and execute the following in a SQL Editor tab:
+
+```sql
+SELECT USER();
+SELECT CURRENT_USER();
+SHOW DATABASES LIKE 'employees';
+```
+
+Confirm that `employees` is the Employees sample database and contains the expected six tables:
+
+```sql
+USE employees;
+SHOW TABLES;
+SELECT COUNT(*) AS employee_rows FROM employees;
+```
+
+The standard Employees sample database has 300,024 rows in `employees`. SafeSliceSQL's row-budget percentage is based on the **sum across all tables**, so it is not calculated from this count alone.
+
+### 4. Create the three target schemas
+
+Run in **MySQL Workbench SQL Editor** (or another connected MySQL SQL client):
+
+```sql
+CREATE DATABASE IF NOT EXISTS employees_random_1pct;
+CREATE DATABASE IF NOT EXISTS employees_referential_1pct;
+CREATE DATABASE IF NOT EXISTS employees_workload_1pct;
+
+SHOW DATABASES LIKE 'employees%1pct';
+```
+
+These are destination schemas, not files. SafeSliceSQL creates/recreates target tables during materialization. Use dedicated targets and do not store data there that you need to keep. The SQL statements above do not drop existing databases.
+
+### 5. Configure the local `.env`
+
+In the repository root, copy `.env.example` to `.env` if `.env` does not already exist. Edit `.env` and set the source and target hosts, ports, users, passwords, and database names using the variable names shown in `.env.example`. For the current project example:
+
+```dotenv
+SAFESLICE_SOURCE_HOST=localhost
+SAFESLICE_SOURCE_PORT=3306
+SAFESLICE_SOURCE_USER=root
+SAFESLICE_SOURCE_PASSWORD=your_local_mysql_password
+SAFESLICE_SOURCE_DATABASE=employees
+
+SAFESLICE_TARGET_HOST=localhost
+SAFESLICE_TARGET_PORT=3306
+SAFESLICE_TARGET_USER=root
+SAFESLICE_TARGET_PASSWORD=your_local_mysql_password
+SAFESLICE_TARGET_DATABASE=employees_workload_1pct
+```
+
+Replace the example password with your local MySQL password; do not commit or share `.env`. `.gitignore` ignores `.env`. The commands below pass an explicit `--target` for each method, so the configured default target is overridden per run. The account needs read access to the source and permission to create/replace target tables. Check the connection and schema before running experiments:
+
+```powershell
+python -m safeslicesql.cli inspect --database employees
+```
+
+Proceed only if the source connection succeeds and the schema is supported. If authentication unexpectedly uses stale values from the current PowerShell process, inspect and clear any `SAFESLICE_*` environment-variable overrides before retrying; `.env` loading does not override existing process environment variables.
+
+### 6. Run the three algorithms
+
+Run these commands separately in **PowerShell**, from `C:\safeslicesql`. Each uses the same source, 1% total-row budget, seed, and default workload, while writing to its own MySQL target and CSV-results directory.
+
+**Algorithm 1 — Random sampling with dependency repair:**
+
+```powershell
+python -m safeslicesql.cli run --method random-repair --budget-percent 1 --seed 42 --source employees --target employees_random_1pct --output-dir results/1pct/random-repair
+```
+
+**Algorithm 2 — Referential/table-aware sampling:**
+
+```powershell
+python -m safeslicesql.cli run --method referential --budget-percent 1 --seed 42 --source employees --target employees_referential_1pct --output-dir results/1pct/referential
+```
+
+**Algorithm 3 — Workload-aware greedy selection:**
+
+```powershell
+python -m safeslicesql.cli run --method workload-aware --budget-percent 1 --seed 42 --source employees --target employees_workload_1pct --output-dir results/1pct/workload-aware
+```
+
+Wait for each command to finish and check its **Subset Validation Summary** and **Workload Evaluation Summary**. Dependency-closure rows count toward the hard budget, so a subset may use less than the full limit if another candidate and its required parents do not fit. Rerunning a method may recreate tables in its target database; do not point it at a database with data you need to preserve.
+
+### 7. Verify target databases and saved results
+
+**MySQL Workbench SQL Editor — list targets and tables:**
+
+```sql
+SHOW DATABASES LIKE 'employees%1pct';
+
+SELECT table_schema, table_name, table_rows
+FROM information_schema.tables
+WHERE table_schema IN (
+  'employees_random_1pct',
+  'employees_referential_1pct',
+  'employees_workload_1pct'
+)
+ORDER BY table_schema, table_name;
+```
+
+The database contents are stored and managed by MySQL Server, not as standalone `.sql` or `.db` files in this repository. The results CSVs are saved under `results/1pct/`. List them in **PowerShell**:
+
+```powershell
+Get-ChildItem .\results\1pct -Recurse
+explorer .\results\1pct
+```
+
+Each CLI run emits a CSV path; use the generated CSV and console metrics as the source of experimental values. Do not fill comparison tables with estimates.
+
+### 8. Interpret the workload metrics
+
+The default `workloads/workload.sql` contains eight queries, identified in order as Q1–Q8. In the run output, **Survived = YES** means the query returns at least one row on both source and subset. The summary survival rate divides survived supported queries by all supported queries; in this workload that denominator includes Q8, which is intentionally empty on the source. State the denominator when comparing survival rates.
+
+- **Key Ret.**: fraction of source result keys found in target results (based on columns recognized as keys; otherwise falls back to exact row overlap).
+- **Row Ret.**: fraction of exact source result tuples retained in target query results; it is not simply target row count divided by source row count.
+- **Agg Ret.**: for grouped/aggregate queries, the current validator measures retention of grouping-key combinations, not equality of aggregate values such as `COUNT` or `SUM`. For other queries it falls back to row retention.
+- **Q8:** both source and target are empty, so it reports `Survived = NO`; the current implementation nevertheless reports retention metrics of 100% for this empty/empty case. Mention this metric caveat when presenting averages.
+
+For the recorded single-seed run, all three methods passed hard-budget, primary-key, foreign-key, schema-compatibility, and source-unchanged validation. At 1% and seed 42, the log reported survival rates of 75.0% (random-repair), 62.5% (referential), and 75.0% (workload-aware); workload-aware had slightly higher reported overall key/row/aggregate retention. These observations describe only this dataset, workload, budget, and seed; repeat with additional seeds before claiming a general algorithmic advantage. See [`docs/technical_report.md`](docs/technical_report.md) for per-query results and metric definitions.
+
+### Troubleshooting
+
+| Problem | Check |
+|---|---|
+| `mysql` is not recognized | Use MySQL Workbench or add the MySQL client executable to PATH. |
+| Connection refused | Confirm the MySQL service is running and host/port match `.env`. |
+| MySQL access denied (1045) | Check username/password and clear stale `SAFESLICE_*` PowerShell environment-variable overrides. |
+| Python module not found | Activate the intended virtual environment and run `python -m pip install -e .`. |
+| `CREATE` is not recognized | SQL was entered in PowerShell; execute it in MySQL Workbench's SQL Editor. |
+| Target already contains tables | Confirm the target is dedicated to this experiment; materialization may refresh its tables. |
+| CLI method rejected | Run `python -m safeslicesql.cli run --help` and use one of the supported method names above. |
 
 ## Repository Layout
 
