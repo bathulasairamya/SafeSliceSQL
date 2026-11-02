@@ -22,6 +22,7 @@ import sqlalchemy as sa
 
 from safeslicesql.types import (
     ClosureResult,
+    DatabaseResolutionError,
     ForeignKeyMetadata,
     SchemaMetadata,
 )
@@ -369,6 +370,74 @@ def _resolve_fk_value(
     return batch_res.get(pk_value, {}).get(fk_column)
 
 
+def _resolve_parent_keys(
+    graph: DependencyGraph, engine: Any, fk: ForeignKeyMetadata, values: set[Any]
+) -> set[Any]:
+    """Translate referenced UNIQUE values into the parent's actual primary keys."""
+    if not values:
+        return set()
+    parent = graph.schema.tables.get(fk.referenced_table)
+    if parent is None or not parent.effective_primary_keys:
+        raise DatabaseResolutionError(
+            f"Parent table '{fk.referenced_table}' has no known primary key."
+        )
+    pk_columns = parent.effective_primary_keys
+    if pk_columns == [fk.referenced_column]:
+        return values
+
+    resolved: dict[Any, list[Any]] = {value: [] for value in values}
+
+    def record(row: Any) -> None:
+        value = row[fk.referenced_column]
+        if value in resolved:
+            key = row[pk_columns[0]] if len(pk_columns) == 1 else tuple(row[c] for c in pk_columns)
+            resolved[value].append(key)
+
+    if isinstance(engine, dict):
+        rows = engine.get(fk.referenced_table, {})
+        if isinstance(rows, dict):
+            for key, row in rows.items():
+                keys = (key,) if len(pk_columns) == 1 else key
+                record({**dict(zip(pk_columns, keys)), **row})
+        else:
+            for row in rows:
+                record(row)
+    elif hasattr(engine, "connect"):
+        try:
+            with engine.connect() as conn:
+                value_list = list(values)
+                for start in range(0, len(value_list), 500):
+                    batch = value_list[start : start + 500]
+                    # Carry the input index through SQL so DB collation/type coercion,
+                    # rather than Python equality, determines reference matching.
+                    statement = sa.text(
+                        " UNION ALL ".join(
+                            f"SELECT {index}, {', '.join(_quote_ident(c) for c in pk_columns)} "
+                            f"FROM {_quote_ident(fk.referenced_table)} "
+                            f"WHERE {_quote_ident(fk.referenced_column)} = :ref_{index}"
+                            for index in range(len(batch))
+                        )
+                    )
+                    for row in conn.execute(
+                        statement, {f"ref_{i}": value for i, value in enumerate(batch)}
+                    ):
+                        key = row[1] if len(pk_columns) == 1 else tuple(row[1:])
+                        resolved[batch[row[0]]].append(key)
+        except Exception as exc:
+            raise DatabaseResolutionError(
+                f"Failed to resolve parent keys in '{parent.name}': {exc}"
+            ) from exc
+    else:
+        raise DatabaseResolutionError(
+            "Non-primary-key references require SQL or dictionary row access."
+        )
+    if any(len(keys) != 1 for keys in resolved.values()):
+        raise DatabaseResolutionError(
+            f"References to '{parent.name}.{fk.referenced_column}' must resolve to exactly one parent row."
+        )
+    return {keys[0] for keys in resolved.values()}
+
+
 def compute_closure(
     graph: DependencyGraph,
     selected: dict[str, set[Any]],
@@ -455,16 +524,13 @@ def compute_closure(
                 child_col = fk.column
                 current_parent_pks = current_selection.setdefault(parent_table, set())
 
-                for child_pk in pks_to_inspect:
-                    fk_value = batch_results.get(child_pk, {}).get(child_col)
-
-                    # v1 Nullable Foreign Key Policy: NULL = no dependency
-                    if fk_value is None:
-                        continue
-
-                    if fk_value not in current_parent_pks:
-                        current_parent_pks.add(fk_value)
-                        closure_additions.setdefault(parent_table, set()).add(fk_value)
+                values = {
+                    batch_results.get(child_pk, {}).get(child_col) for child_pk in pks_to_inspect
+                } - {None}
+                parent_keys = _resolve_parent_keys(graph, engine, fk, values)
+                additions = parent_keys - current_parent_pks
+                current_parent_pks.update(additions)
+                closure_additions.setdefault(parent_table, set()).update(additions)
 
             inspected_rows[child_table].update(pks_to_inspect)
 

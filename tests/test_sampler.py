@@ -14,7 +14,15 @@ from safeslicesql.types import (
     SchemaMetadata,
     TableMetadata,
 )
-from safeslicesql.workload_analyzer import WorkloadAnalysis
+from safeslicesql.workload_analyzer import QueryInfo, WorkloadAnalysis
+
+
+def composite_workload():
+    workload = WorkloadAnalysis()
+    query = QueryInfo("Q1", "SELECT * FROM child_rows")
+    query.tables = ["child_rows"]
+    workload.queries = [query]
+    return workload
 
 
 @pytest.fixture
@@ -141,9 +149,7 @@ def test_selection_supports_composite_primary_keys(method):
             ColumnMetadata("sequence", "INTEGER", False, is_primary_key=True),
             ColumnMetadata("value", "TEXT", True),
         ],
-        foreign_keys=[
-            ForeignKeyMetadata("fk_child_parent", "parent_id", "parents", "parent_id")
-        ],
+        foreign_keys=[ForeignKeyMetadata("fk_child_parent", "parent_id", "parents", "parent_id")],
         row_count=3,
     )
     engine = {
@@ -160,7 +166,7 @@ def test_selection_supports_composite_primary_keys(method):
 
     result = select_rows(
         schema=schema,
-        workload=WorkloadAnalysis(),
+        workload=composite_workload(),
         graph=None,
         engine=engine,
         budget=4,
@@ -192,18 +198,13 @@ def test_sql_selector_supports_composite_primary_keys(method):
             )
         )
         conn.execute(text("INSERT INTO parents VALUES (1, 'one'), (2, 'two')"))
-        conn.execute(
-            text(
-                "INSERT INTO child_rows VALUES "
-                "(1, 1, 'a'), (1, 2, 'b'), (2, 1, 'c')"
-            )
-        )
+        conn.execute(text("INSERT INTO child_rows VALUES (1, 1, 'a'), (1, 2, 'b'), (2, 1, 'c')"))
 
     try:
         schema = inspect_schema(engine)
         result = select_rows(
             schema=schema,
-            workload=WorkloadAnalysis(),
+            workload=composite_workload(),
             graph=None,
             engine=engine,
             budget=4,
@@ -213,7 +214,9 @@ def test_sql_selector_supports_composite_primary_keys(method):
 
         assert result.total_selected <= result.budget
         assert result.selected_rows.get("child_rows")
-        assert all(isinstance(pk, tuple) and len(pk) == 2 for pk in result.selected_rows["child_rows"])
+        assert all(
+            isinstance(pk, tuple) and len(pk) == 2 for pk in result.selected_rows["child_rows"]
+        )
         selected_parent_ids = set(result.selected_rows.get("parents", []))
         assert all(pk[0] in selected_parent_ids for pk in result.selected_rows["child_rows"])
     finally:
@@ -222,9 +225,7 @@ def test_sql_selector_supports_composite_primary_keys(method):
 
 def test_selector_rejects_unsupported_composite_foreign_keys(sample_schema, sample_engine):
     schema = sample_schema
-    schema.unsupported_features.append(
-        "Table 'child_rows' has composite foreign key 'fk_pair'."
-    )
+    schema.unsupported_features.append("Table 'child_rows' has composite foreign key 'fk_pair'.")
 
     with pytest.raises(ValueError, match="does not support composite foreign keys"):
         select_rows(

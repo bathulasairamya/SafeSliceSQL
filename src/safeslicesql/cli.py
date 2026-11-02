@@ -24,7 +24,7 @@ from typing import Optional
 
 import typer
 
-from safeslicesql.config import load_config
+from safeslicesql.config import load_config, load_logging_settings
 from safeslicesql.db import (
     create_engine,
     get_source_engine,
@@ -42,10 +42,11 @@ from safeslicesql.reporting import (
 )
 from safeslicesql.sampler import select_rows
 from safeslicesql.schema_analyzer import inspect_schema
+from safeslicesql.source_snapshot import capture_source_snapshot
 from safeslicesql.subset_generator import materialize_subset
 from safeslicesql.types import BenchmarkRunResult
 from safeslicesql.validator import evaluate_workload, validate_subset
-from safeslicesql.workload_analyzer import analyze_workload
+from safeslicesql.workload_analyzer import analyze_workload, require_usable_workload
 
 logger = logging.getLogger("safeslicesql.cli")
 
@@ -57,9 +58,10 @@ app = typer.Typer(
 )
 
 
-def _init(log_level: str = "INFO") -> None:
-    """Initialize logging and configuration."""
-    setup_logging(level=log_level)
+def _init(log_level: str | None = None) -> None:
+    """Apply environment logging defaults and explicit CLI precedence."""
+    env_level, log_dir = load_logging_settings()
+    setup_logging(level=log_level or env_level, log_dir=log_dir, force=True)
 
 
 @app.command()
@@ -70,8 +72,8 @@ def inspect(
         "-d",
         help="Source database name to inspect.",
     ),
-    log_level: str = typer.Option(
-        "INFO",
+    log_level: Optional[str] = typer.Option(
+        None,
         "--log-level",
         "-l",
         help="Logging level (DEBUG, INFO, WARNING, ERROR).",
@@ -82,12 +84,16 @@ def inspect(
     logger.info("Inspecting database: %s", database)
 
     try:
-        config = load_config()
+        config = load_config(validate=False, require_target=False)
     except Exception as exc:
         typer.echo(f"[error] Failed to load configuration: {exc}", err=True)
         raise typer.Exit(code=1)
 
     config.source_db.database = database
+    errors = config.validate(require_target=False)
+    if errors:
+        typer.echo("[error] " + "; ".join(errors), err=True)
+        raise typer.Exit(code=1)
     engine = create_engine(config.source_db)
 
     if not test_connection(engine):
@@ -210,8 +216,8 @@ def run(
         "--dry-run",
         help="Simulate selection without materializing into target database.",
     ),
-    log_level: str = typer.Option(
-        "INFO",
+    log_level: Optional[str] = typer.Option(
+        None,
         "--log-level",
         "-l",
         help="Logging level.",
@@ -244,7 +250,7 @@ def run(
     )
 
     try:
-        config = load_config()
+        config = load_config(validate=False, require_target=not dry_run)
     except Exception as exc:
         typer.echo(f"[error] Failed to load configuration: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -254,14 +260,14 @@ def run(
     if target:
         config.target_db.database = target
 
-    config_errors = config.validate()
+    config_errors = config.validate(require_target=not dry_run)
     if config_errors:
         for err in config_errors:
             typer.echo(f"[error] Configuration error: {err}", err=True)
         raise typer.Exit(code=1)
 
     source_engine = get_source_engine(config)
-    target_engine = get_target_engine(config)
+    target_engine = None if dry_run else get_target_engine(config)
 
     try:
         if not test_connection(source_engine):
@@ -272,7 +278,7 @@ def run(
             )
             raise typer.Exit(code=1)
 
-        if not test_connection(target_engine):
+        if not dry_run and not test_connection(target_engine):
             typer.echo(
                 f"[error] Could not connect to target database '{config.target_db.database}' on "
                 f"{config.target_db.host}:{config.target_db.port}.",
@@ -304,6 +310,8 @@ def run(
             budget_percent,
         )
 
+        initial_source_snapshot = capture_source_snapshot(source_engine)
+
         # 3. Workload Analysis
         workload_path = Path(workload)
         if workload == "workloads/workload.sql" and config.source_db.database:
@@ -312,17 +320,17 @@ def run(
                 workload_path = specific_workload
                 logger.info("Using source-specific workload file: %s", specific_workload)
 
-        workload_analysis = None
-        if workload_path.exists():
-            try:
-                workload_analysis = analyze_workload(workload_path, engine=source_engine)
-                logger.info(
-                    "Parsed workload with %d queries (%d supported)",
-                    len(workload_analysis.queries),
-                    len(workload_analysis.supported_queries),
-                )
-            except Exception as exc:
-                logger.warning("Workload analysis failed: %s", exc)
+        try:
+            workload_analysis = analyze_workload(workload_path, engine=source_engine)
+            require_usable_workload(workload_analysis, for_selection=method == "workload-aware")
+            logger.info(
+                "Parsed workload with %d queries (%d supported)",
+                len(workload_analysis.queries),
+                len(workload_analysis.supported_queries),
+            )
+        except Exception as exc:
+            typer.echo(f"[error] Workload analysis failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
 
         # 4. Selection
         run_id = f"{method}_{budget_percent}pct_s{seed}_{int(time.time())}"
@@ -370,23 +378,9 @@ def run(
             typer.echo(f"[error] Materialization failed: {generation.error_message}", err=True)
             raise typer.Exit(code=1)
 
-        # 6. Validation
-        t0 = time.time()
-        try:
-            validation = validate_subset(
-                source_engine=source_engine,
-                target_engine=target_engine,
-                budget_limit=budget,
-                initial_source_row_count=total_source_rows,
-            )
-        except Exception as exc:
-            typer.echo(f"[error] Validation failed: {exc}", err=True)
-            raise typer.Exit(code=1)
-        runtime_validation = time.time() - t0
-        print_validation_summary(validation)
-
         # 7. Workload Evaluation
         workload_report = None
+        workload_error = ""
         runtime_workload = 0.0
         if workload_analysis and len(workload_analysis.supported_queries) > 0:
             t0 = time.time()
@@ -398,8 +392,30 @@ def run(
                 )
                 print_workload_summary(workload_report)
             except Exception as exc:
+                workload_error = str(exc)
                 logger.warning("Workload evaluation encountered an error: %s", exc)
             runtime_workload = time.time() - t0
+
+        # 6. Validation
+        t0 = time.time()
+        try:
+            validation = validate_subset(
+                source_engine=source_engine,
+                target_engine=target_engine,
+                budget_limit=budget,
+                initial_source_row_count=total_source_rows,
+                initial_source_snapshot=initial_source_snapshot,
+            )
+        except Exception as exc:
+            typer.echo(f"[error] Validation failed: {exc}", err=True)
+            raise typer.Exit(code=1)
+        runtime_validation = time.time() - t0
+        print_validation_summary(validation)
+
+        if workload_report and workload_report.failed_queries:
+            workload_error = "; ".join(
+                q.error for q in workload_report.per_query_results if q.error
+            )
 
         # 8. Save CSV results
         run_result = BenchmarkRunResult(
@@ -416,8 +432,10 @@ def run(
             runtime_materialization=runtime_materialization,
             runtime_validation=runtime_validation,
             runtime_workload_eval=runtime_workload,
-            success=validation.is_valid and generation.success,
-            error_message="; ".join(validation.errors) if validation.errors else "",
+            success=validation.is_valid and generation.success and not workload_error,
+            error_message="; ".join(
+                [*validation.errors, *([workload_error] if workload_error else [])]
+            ),
         )
 
         csv_path = save_run_results_csv(run_result, output_dir=output_dir)
@@ -427,10 +445,15 @@ def run(
             typer.echo("[error] Validation checks failed.", err=True)
             raise typer.Exit(code=1)
 
+        if workload_error:
+            typer.echo("[error] Workload evaluation failed; see exported results.", err=True)
+            raise typer.Exit(code=1)
+
         typer.echo("[run] SafeSlice completed successfully.")
     finally:
         source_engine.dispose()
-        target_engine.dispose()
+        if target_engine is not None:
+            target_engine.dispose()
 
 
 @app.command()
@@ -456,8 +479,8 @@ def validate(
         "-w",
         help="Optional workload file path to evaluate retention metrics.",
     ),
-    log_level: str = typer.Option(
-        "INFO",
+    log_level: Optional[str] = typer.Option(
+        None,
         "--log-level",
         "-l",
         help="Logging level.",
@@ -468,7 +491,7 @@ def validate(
     logger.info("Validating: source=%s, target=%s", source, target)
 
     try:
-        config = load_config()
+        config = load_config(validate=False)
     except Exception as exc:
         typer.echo(f"[error] Failed to load configuration: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -498,18 +521,24 @@ def validate(
             try:
                 schema = inspect_schema(source_engine)
                 budget_limit = schema.total_row_count
-            except Exception:
-                budget_limit = 100_000_000
+            except Exception as exc:
+                typer.echo(f"[error] Cannot determine validation budget: {exc}", err=True)
+                raise typer.Exit(code=1) from exc
 
         report = validate_subset(source_engine, target_engine, budget_limit=budget_limit)
         print_validation_summary(report)
 
         if workload:
-            wl_path = Path(workload)
-            if wl_path.exists():
-                wl = analyze_workload(wl_path, engine=source_engine)
+            try:
+                wl = analyze_workload(Path(workload), engine=source_engine)
+                require_usable_workload(wl)
                 wl_report = evaluate_workload(source_engine, target_engine, wl)
                 print_workload_summary(wl_report)
+            except Exception as exc:
+                typer.echo(f"[error] Workload evaluation failed: {exc}", err=True)
+                raise typer.Exit(code=1) from exc
+            if wl_report.failed_queries:
+                raise typer.Exit(code=1)
 
         if not report.is_valid:
             raise typer.Exit(code=1)
@@ -526,8 +555,8 @@ def benchmark(
         "-c",
         help="Path to the benchmark YAML configuration file.",
     ),
-    log_level: str = typer.Option(
-        "INFO",
+    log_level: Optional[str] = typer.Option(
+        None,
         "--log-level",
         "-l",
         help="Logging level.",
@@ -540,12 +569,19 @@ def benchmark(
     try:
         from safeslicesql.benchmark import run_benchmark
 
-        run_benchmark(config)
+        results = run_benchmark(config)
     except NotImplementedError:
         typer.echo("[benchmark] Phase 8 benchmark runner is being prepared.", err=True)
         raise typer.Exit(code=1)
     except Exception as exc:
         typer.echo(f"[error] Benchmark failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    if results.failed_runs or not results.total_runs:
+        typer.echo(
+            f"[error] Benchmark completed with {results.failed_runs} failed runs out of {results.total_runs}.",
+            err=True,
+        )
         raise typer.Exit(code=1)
 
 

@@ -60,7 +60,7 @@ SafeSliceSQL currently supports:
 
 - MySQL 8.x with InnoDB
 - Single-column and composite primary keys
-- Single-column foreign keys in acyclic graphs
+- Single-column foreign keys in acyclic table dependencies; self-referencing tables with acyclic row dependencies
 - Nullable foreign keys treated as "no dependency"
 - SELECT workloads with WHERE, JOIN, GROUP BY, and basic aggregates
 - Fixed workload files and reproducible seeds
@@ -138,7 +138,7 @@ SAFESLICE_LOG_LEVEL=INFO
 SAFESLICE_LOG_DIR=logs
 ```
 
-Use your own credentials in `.env`; do not put real passwords in source files or commit `.env`. The source account should have read access. The target account needs permission to create and replace tables and insert selected rows. If a password contains `#` or whitespace, quote its value in `.env`.
+Use your own credentials in `.env`; do not put real passwords in source files or commit `.env`. The source account should have read access. The target account needs permission to create tables and delete/insert target rows (plus DROP to clean up newly created tables after a failed attempt). If a password contains `#` or whitespace, quote its value in `.env`.
 
 Create the source database by loading a MySQL sample database if it is not already present. SafeSliceSQL does not download or load the Employees sample dataset for you. Verify it and create the target database in MySQL:
 
@@ -179,13 +179,21 @@ python -m safeslicesql.cli run --method workload-aware --budget-percent 20 --see
 python -m safeslicesql.cli validate --source employees --target employees_random_slice
 ```
 
-Create each target database in MySQL before running its corresponding method. Materialization recreates tables in the specified target, so use a dedicated target database for each method. Run output directories are created automatically and contain CSV run metrics; they are not SQL database dumps. To export a target database as a SQL dump, use MySQL's `mysqldump` command separately.
+Create each target database in MySQL before running its corresponding method. Materialization transactionally refreshes rows in compatible target tables, so use a dedicated target database for each method. Run output directories are created automatically and contain CSV run metrics; they are not SQL database dumps. To export a target database as a SQL dump, use MySQL's `mysqldump` command separately.
 
 The Employees sample contains composite primary keys. These are supported and represented internally as tuples in primary-key column order. Composite foreign keys and cyclic foreign-key graphs remain unsupported. Candidate selection scans source primary keys to build a seeded reservoir, so even a small row budget can take time on multi-million-row databases.
 
+## Materialization safety
+
+The connected source and target databases must be distinct. MySQL identity checks use the server UUID and connected database, so host aliases and misleading target names cannot bypass the guard. Explicit MySQL target names must match the target connection.
+
+Existing target tables must match the source column definitions, primary and foreign keys, unique constraints, and check constraints. Incompatible schemas or failed reflection abort the run; SafeSliceSQL does not guess replacement types or drop existing tables. Use a separate empty target when changing the source schema.
+
+Compatible targets are refreshed using child-first DELETEs and parent-first INSERTs in one transaction. Self-referencing tables are ordered by their actual row dependencies for both deletion and insertion; cyclic rows or omitted required parents abort the copy and roll back. A failed copy rolls back to the previous target rows. MySQL tables must use InnoDB. Missing tables are created before the copy; cleanup after failure only drops tables created by that attempt. Failure to clean up is logged. Workload statements classified as unsupported are never executed. Every source table must have a declared primary key. Selected keys must be unique, and every selected row must exist when copied. Budgets must be non-negative integers (zero permits only an empty subset), and the actual target row count is checked before commit. Generated columns are computed by the target and are omitted from INSERT payloads.
+
 ## Workload Model
 
-The workload is a fixed SQL workload file stored in the workloads directory. Each query is parsed for:
+The workload is a fixed SQL workload file stored in the workloads directory. Statement splitting respects quoted strings, escaped quotes, and quoted identifiers. Standard SQL block comments, MySQL-style `-- ` comments, and `#` comments are removed without changing following clauses; executable comments and unterminated quotes/comments are rejected. The lexer assumes MySQL backslash-escape rules. Database-qualified workload table names are excluded so target evaluation cannot accidentally query a named source database. Each query is parsed for:
 
 - tables referenced
 - join relationships
@@ -230,7 +238,7 @@ SafeSliceSQL validates:
 - foreign-key integrity
 - budget compliance
 - schema compatibility
-- source immutability assumptions
+- source content/schema fingerprints for runs and benchmarks; standalone validation without a prior snapshot reports immutability as unverified
 
 It then executes the declared workload on both source and target databases and compares metrics such as:
 
@@ -257,7 +265,7 @@ The checked-in `benchmarks/benchmarks.yaml` is configured with SQLite example UR
 python -m safeslicesql.cli benchmark --config benchmarks\benchmarks_mysql.yaml
 ```
 
-The benchmark reuses and recreates tables in its configured target database across experiments. Its raw run CSVs, summary CSV/Markdown files, and plots are written to the configured raw, summary, and plot directories.
+The benchmark reuses compatible tables and transactionally refreshes their rows in its configured target database across experiments. Its raw run CSVs, summary CSV/Markdown files, and plots are written to the configured raw, summary, and plot directories.
 
 ## Complete setup and 1% experiment reproduction (Windows)
 
@@ -354,7 +362,7 @@ CREATE DATABASE IF NOT EXISTS employees_workload_1pct;
 SHOW DATABASES LIKE 'employees%1pct';
 ```
 
-These are destination schemas, not files. SafeSliceSQL creates/recreates target tables during materialization. Use dedicated targets and do not store data there that you need to keep. The SQL statements above do not drop existing databases.
+These are destination schemas, not files. SafeSliceSQL creates missing target tables and refreshes rows in compatible existing tables during materialization. Use dedicated targets and do not store data there that you need to keep. The SQL statements above do not drop existing databases.
 
 ### 5. Configure the local `.env`
 
@@ -374,7 +382,7 @@ SAFESLICE_TARGET_PASSWORD=your_local_mysql_password
 SAFESLICE_TARGET_DATABASE=employees_workload_1pct
 ```
 
-Replace the example password with your local MySQL password; do not commit or share `.env`. `.gitignore` ignores `.env`. The commands below pass an explicit `--target` for each method, so the configured default target is overridden per run. The account needs read access to the source and permission to create/replace target tables. Check the connection and schema before running experiments:
+Replace the example password with your local MySQL password; do not commit or share `.env`. `.gitignore` ignores `.env`. The commands below pass an explicit `--target` for each method, so the configured default target is overridden per run. The account needs read access to the source and permission to create tables and delete/insert target rows. Check the connection and schema before running experiments:
 
 ```powershell
 python -m safeslicesql.cli inspect --database employees
@@ -404,7 +412,7 @@ python -m safeslicesql.cli run --method referential --budget-percent 1 --seed 42
 python -m safeslicesql.cli run --method workload-aware --budget-percent 1 --seed 42 --source employees --target employees_workload_1pct --output-dir results/1pct/workload-aware
 ```
 
-Wait for each command to finish and check its **Subset Validation Summary** and **Workload Evaluation Summary**. Dependency-closure rows count toward the hard budget, so a subset may use less than the full limit if another candidate and its required parents do not fit. Rerunning a method may recreate tables in its target database; do not point it at a database with data you need to preserve.
+Wait for each command to finish and check its **Subset Validation Summary** and **Workload Evaluation Summary**. Dependency-closure rows count toward the hard budget, so a subset may use less than the full limit if another candidate and its required parents do not fit. Rerunning a method replaces rows in its target database; do not point it at a database with data you need to preserve.
 
 ### 7. Verify target databases and saved results
 
@@ -434,14 +442,14 @@ Each CLI run emits a CSV path; use the generated CSV and console metrics as the 
 
 ### 8. Interpret the workload metrics
 
-The default `workloads/workload.sql` contains eight queries, identified in order as Q1–Q8. In the run output, **Survived = YES** means the query returns at least one row on both source and subset. The summary survival rate divides survived supported queries by all supported queries; in this workload that denominator includes Q8, which is intentionally empty on the source. State the denominator when comparing survival rates.
+The default `workloads/workload.sql` contains eight queries, identified in order as Q1–Q8. In the run output, **Survived = YES** means the query returns at least one row on both source and subset. The summary survival rate divides survived queries by eligible source queries: confirmed source-empty queries such as Q8 are excluded, while execution failures with unknown source results count as failures. The output shows the denominator and failure counts.
 
 - **Key Ret.**: fraction of source result keys found in target results (based on columns recognized as keys; otherwise falls back to exact row overlap).
-- **Row Ret.**: fraction of exact source result tuples retained in target query results; it is not simply target row count divided by source row count.
-- **Agg Ret.**: for grouped/aggregate queries, the current validator measures retention of grouping-key combinations, not equality of aggregate values such as `COUNT` or `SUM`. For other queries it falls back to row retention.
-- **Q8:** both source and target are empty, so it reports `Survived = NO`; the current implementation nevertheless reports retention metrics of 100% for this empty/empty case. Mention this metric caveat when presenting averages.
+- **Row Ret.**: fraction of source result rows retained using multiset overlap, so duplicate tuples count correctly and repeated output column names preserve every position.
+- **Agg Ret.**: for grouped queries with resolvable projected grouping keys, this measures grouping-key survival, including aliased outputs. Scalar aggregates and unresolved grouping projections fall back to exact result-row retention; this is not a general numerical aggregate-accuracy metric.
+- **Q8:** both source and target are empty, so it reports `Survived = NO`; retention metrics remain 100% for this empty/empty case, and Q8 is excluded from the survival denominator. Mention this metric caveat when presenting averages.
 
-For the recorded single-seed run, all three methods passed hard-budget, primary-key, foreign-key, schema-compatibility, and source-unchanged validation. At 1% and seed 42, the log reported survival rates of 75.0% (random-repair), 62.5% (referential), and 75.0% (workload-aware); workload-aware had slightly higher reported overall key/row/aggregate retention. These observations describe only this dataset, workload, budget, and seed; repeat with additional seeds before claiming a general algorithmic advantage. See [`docs/technical_report.md`](docs/technical_report.md) for per-query results and metric definitions.
+The following recorded single-seed figures use the previous validation and metric definitions and must be regenerated for comparison with current runs. In that historical run, all three methods passed hard-budget, primary-key, foreign-key, schema-compatibility, and source-unchanged validation. At 1% and seed 42, the log reported survival rates of 75.0% (random-repair), 62.5% (referential), and 75.0% (workload-aware); workload-aware had slightly higher reported overall key/row/aggregate retention. These observations describe only this dataset, workload, budget, and seed; repeat with additional seeds before claiming a general algorithmic advantage. See [`technical_report.md`](technical_report.md) for per-query results and metric definitions.
 
 ### Troubleshooting
 

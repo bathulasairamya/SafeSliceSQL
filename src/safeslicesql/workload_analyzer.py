@@ -17,7 +17,9 @@ import re
 from pathlib import Path
 
 import sqlalchemy as sa
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine
+
+from safeslicesql.sql_lexer import identifier, split_statements, syntax_only, tokenize
 
 logger = logging.getLogger("safeslicesql.workload_analyzer")
 
@@ -88,6 +90,21 @@ class QueryInfo:
         self.is_supported: bool = True
         self.exclusion_reason: str = ""
         self.source_row_count: int = 0
+        self.source_evaluated: bool = False
+        self.analysis_error: str = ""
+        self.group_output_positions: list[int] | None = None
+
+
+def require_usable_workload(
+    analysis: WorkloadAnalysis | None, *, for_selection: bool = False
+) -> None:
+    """Reject an absent/empty experiment rather than silently changing methods."""
+    if analysis is None or not analysis.supported_queries:
+        raise ValueError("Workload must contain at least one supported SELECT query.")
+    if for_selection and not any(
+        query.tables and not query.analysis_error for query in analysis.supported_queries
+    ):
+        raise ValueError("Workload-aware selection requires at least one usable workload query.")
 
 
 def load_workload(workload_path: str | Path) -> list[str]:
@@ -111,20 +128,7 @@ def load_workload(workload_path: str | Path) -> list[str]:
     if not path.exists():
         raise FileNotFoundError(f"Workload file not found at {path.resolve()}")
 
-    content = path.read_text(encoding="utf-8")
-    queries: list[str] = []
-
-    for chunk in content.split(";"):
-        cleaned_lines = [
-            line.strip()
-            for line in chunk.splitlines()
-            if line.strip() and not line.strip().startswith("--")
-        ]
-        sql = " ".join(cleaned_lines).strip()
-        if sql:
-            queries.append(sql)
-
-    return queries
+    return split_statements(path.read_text(encoding="utf-8-sig"))
 
 
 SQL_KEYWORDS = {
@@ -181,112 +185,219 @@ def _extract_tables_and_aliases(sql: str) -> tuple[list[str], dict[str, str]]:
     table_names: list[str] = []
     alias_map: dict[str, str] = {}
 
-    pattern = re.compile(
-        r"\b(?:FROM|JOIN)\s+([A-Za-z_][\w]*)(?:\s+(?:AS\s+)?([A-Za-z_][\w]*))?",
-        re.IGNORECASE,
-    )
-
-    for match in pattern.finditer(sql):
-        tbl = match.group(1)
-        alias = match.group(2)
-
-        if tbl.upper() in SQL_KEYWORDS:
+    tokens = [token for token in tokenize(sql) if token.kind != "space"]
+    for index, token in enumerate(tokens[:-1]):
+        if token.kind != "word" or token.text.upper() not in {"FROM", "JOIN"}:
             continue
-
+        table_token = tokens[index + 1]
+        tbl = identifier(table_token)
+        if tbl is None or (table_token.kind == "word" and tbl.upper() in SQL_KEYWORDS):
+            continue
+        next_index = index + 2
+        if next_index < len(tokens) and tokens[next_index].text == ".":
+            # Qualified databases would also pin target evaluation to the source.
+            raise ValueError("Database-qualified workload tables are not supported.")
         if tbl not in table_names:
             table_names.append(tbl)
         alias_map[tbl] = tbl
         alias_map[tbl.lower()] = tbl
-
-        if alias and alias.upper() not in SQL_KEYWORDS:
-            alias_map[alias] = tbl
-            alias_map[alias.lower()] = tbl
+        if (
+            next_index < len(tokens)
+            and tokens[next_index].kind == "word"
+            and tokens[next_index].text.upper() == "AS"
+        ):
+            next_index += 1
+        if next_index < len(tokens):
+            alias_token = tokens[next_index]
+            alias = identifier(alias_token)
+            if alias and (alias_token.kind == "quoted" or alias.upper() not in SQL_KEYWORDS):
+                alias_map[alias] = tbl
+                alias_map[alias.lower()] = tbl
 
     return table_names, alias_map
 
 
-def _extract_join_pairs(
-    sql: str, tables: list[str], alias_map: dict[str, str]
-) -> list[tuple[str, str]]:
-    """Return pairs of tables joined in the query."""
-    join_pairs: list[tuple[str, str]] = []
-
-    # Try parsing explicit ON clauses: ON a.col = b.col
-    on_pattern = re.compile(
-        r"\bON\s+([A-Za-z_][\w]*)\.[A-Za-z_][\w]*\s*=\s*([A-Za-z_][\w]*)\.[A-Za-z_][\w]*",
-        re.IGNORECASE,
-    )
-    for match in on_pattern.finditer(sql):
-        t1 = alias_map.get(match.group(1), match.group(1))
-        t2 = alias_map.get(match.group(2), match.group(2))
-        if t1 != t2:
-            pair = tuple(sorted([t1, t2]))
-            if pair not in join_pairs:
-                join_pairs.append(pair)
-
-    if not join_pairs and len(tables) >= 2:
-        for i in range(1, len(tables)):
-            pair = (tables[i - 1], tables[i])
-            if pair not in join_pairs:
-                join_pairs.append(pair)
-
-    return join_pairs
+def _tokens(sql: str):
+    return [token for token in tokenize(sql) if token.kind != "space"]
 
 
-def _extract_column_refs(
-    clause: str,
-    alias_map: dict[str, str],
-    tables: list[str],
-) -> list[tuple[str, str]]:
-    """Parse table.column references with alias resolution and single-table fallback."""
-    if not clause:
-        return []
+def _clause_tokens(sql: str, start: tuple[str, ...], endings: set[str]):
+    tokens = _tokens(sql)
+    depth = 0
+    found = None
+    for index, token in enumerate(tokens):
+        if depth == 0:
+            if found is None and all(
+                index + offset < len(tokens)
+                and tokens[index + offset].kind == "word"
+                and tokens[index + offset].text.upper() == word
+                for offset, word in enumerate(start)
+            ):
+                found = index + len(start)
+            elif (
+                found is not None
+                and index >= found
+                and token.kind == "word"
+                and token.text.upper() in endings
+            ):
+                return tokens[found:index]
+        if token.text == "(":
+            depth += 1
+        elif token.text == ")":
+            depth -= 1
+    return tokens[found:] if found is not None else []
 
-    refs: list[tuple[str, str]] = []
 
-    # 1. Qualified references: alias.column or table.column
-    for match in re.finditer(r"([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)", clause):
-        prefix, col = match.group(1), match.group(2)
-        resolved_table = alias_map.get(prefix, alias_map.get(prefix.lower(), prefix))
-        ref = (resolved_table, col)
-        if ref not in refs:
-            refs.append(ref)
+def _split_expressions(tokens):
+    expressions, current, depth = [], [], 0
+    for token in tokens:
+        if token.text == "," and depth == 0:
+            expressions.append(current)
+            current = []
+            continue
+        current.append(token)
+        if token.text == "(":
+            depth += 1
+        elif token.text == ")":
+            depth -= 1
+    if current:
+        expressions.append(current)
+    return expressions
 
-    # 2. Single-table unqualified column fallback: col > val
-    if not refs and len(tables) == 1:
-        tbl = tables[0]
-        for match in re.finditer(
-            r"\b([A-Za-z_][\w]*)\s*(?:[=><!]|LIKE|IN|IS|BETWEEN)",
-            clause,
-            re.IGNORECASE,
-        ):
-            col = match.group(1)
-            if col.upper() not in SQL_KEYWORDS:
-                ref = (tbl, col)
+
+def _references(tokens, alias_map, tables):
+    refs, index = [], 0
+    while index < len(tokens):
+        token = tokens[index]
+        name = identifier(token)
+        if name is None or (token.kind == "word" and name.upper() in SQL_KEYWORDS):
+            index += 1
+            continue
+        if index + 2 < len(tokens) and tokens[index + 1].text == ".":
+            column = identifier(tokens[index + 2])
+            if column:
+                ref = (alias_map.get(name, alias_map.get(name.lower(), name)), column)
                 if ref not in refs:
                     refs.append(ref)
-
+            index += 3
+            continue
+        if index + 1 < len(tokens) and tokens[index + 1].text == "(":
+            index += 1  # Function name, not a column.
+            continue
+        if len(tables) == 1:
+            ref = (tables[0], name)
+            if ref not in refs:
+                refs.append(ref)
+        index += 1
     return refs
 
 
-def _extract_group_columns(
-    sql: str,
-    alias_map: dict[str, str],
-    tables: list[str],
-) -> list[tuple[str, str]]:
-    """Extract GROUP BY table.column references with alias resolution."""
-    group_sql = re.search(
-        r"\bGROUP\s+BY\b(.*?)(?:\bHAVING\b|\bORDER\s+BY\b|$)",
-        sql,
-        flags=re.IGNORECASE | re.DOTALL,
+def _extract_join_pairs(sql, tables, alias_map):
+    pairs = []
+    tokens = _tokens(sql)
+    for index, token in enumerate(tokens):
+        if token.text != "=" or index < 3 or index + 3 >= len(tokens):
+            continue
+        left, right = tokens[index - 3 : index], tokens[index + 1 : index + 4]
+        if left[1].text == right[1].text == ".":
+            left_refs, right_refs = (
+                _references(left, alias_map, tables),
+                _references(right, alias_map, tables),
+            )
+            if left_refs and right_refs and left_refs[0][0] != right_refs[0][0]:
+                pair = tuple(sorted((left_refs[0][0], right_refs[0][0])))
+                if pair not in pairs:
+                    pairs.append(pair)
+    return pairs or list(zip(tables, tables[1:]))
+
+
+def _extract_column_refs(clause, alias_map, tables):
+    return _references(_tokens(clause), alias_map, tables)
+
+
+def _projection_expressions(sql):
+    tokens = _clause_tokens(sql, ("SELECT",), {"FROM"})
+    if tokens and tokens[0].kind == "word" and tokens[0].text.upper() in {"DISTINCT", "ALL"}:
+        tokens = tokens[1:]
+    projections = []
+    for expression in _split_expressions(tokens):
+        alias = None
+        if (
+            len(expression) >= 3
+            and expression[-2].kind == "word"
+            and expression[-2].text.upper() == "AS"
+        ):
+            alias = identifier(expression[-1])
+            expression = expression[:-2]
+        elif (
+            len(expression) >= 2
+            and identifier(expression[-1])
+            and (identifier(expression[-2]) or expression[-2].text == ")")
+        ):
+            alias = identifier(expression[-1])
+            expression = expression[:-1]
+        projections.append((expression, alias))
+    return projections
+
+
+def _expression_key(tokens, alias_map, tables):
+    # Resolve the common simple column forms, including qualified/unqualified pairs.
+    refs = _references(tokens, alias_map, tables)
+    if len(refs) == 1 and (len(tokens) == 1 or (len(tokens) == 3 and tokens[1].text == ".")):
+        return tuple(part.lower() for part in refs[0])
+    return tuple((token.kind, token.text.lower()) for token in tokens)
+
+
+def _group_features(sql, alias_map, tables):
+    projections = _projection_expressions(sql)
+    group_tokens = _clause_tokens(sql, ("GROUP", "BY"), {"HAVING", "ORDER", "LIMIT"})
+    groups = _split_expressions(group_tokens)
+    refs, positions = [], []
+    projection_keys = [
+        _expression_key(expression, alias_map, tables) for expression, _ in projections
+    ]
+    for group in groups:
+        expression = group
+        position = None
+        raw = "".join(token.text for token in group)
+        if raw.isdigit() and 1 <= int(raw) <= len(projections):
+            position = int(raw) - 1
+            expression = projections[position][0]
+        elif len(group) == 1 and identifier(group[0]):
+            matches = [
+                i
+                for i, (_, alias) in enumerate(projections)
+                if alias and alias.lower() == identifier(group[0]).lower()
+            ]
+            if len(matches) == 1:
+                position = matches[0]
+                expression = projections[position][0]
+        if position is None:
+            key = _expression_key(expression, alias_map, tables)
+            matches = [i for i, candidate in enumerate(projection_keys) if candidate == key]
+            if len(matches) == 1:
+                position = matches[0]
+        positions.append(position)
+        for ref in _references(expression, alias_map, tables):
+            if ref not in refs:
+                refs.append(ref)
+    # Wildcard expansion shifts output positions; don't guess ambiguous mappings.
+    has_wildcard = any(
+        any(token.text == "*" for token in expression)
+        and not any(token.text == "(" for token in expression)
+        for expression, _ in projections
     )
-    if not group_sql:
-        return []
-    return _extract_column_refs(group_sql.group(1), alias_map, tables)
+    mapped = positions if groups and None not in positions and not has_wildcard else None
+    return refs, mapped
+
+
+def _extract_group_columns(sql, alias_map, tables):
+    return _group_features(sql, alias_map, tables)[0]
 
 
 def _extract_aggregates(sql: str) -> list[str]:
     """Detect standard aggregate functions used in the query."""
+    sql = syntax_only(sql)
     entries: list[str] = []
     for func in ("COUNT", "SUM", "AVG", "MIN", "MAX"):
         if re.search(rf"\b{func}\s*\(", sql, flags=re.IGNORECASE):
@@ -300,13 +411,16 @@ def _is_supported_query(raw_sql: str) -> tuple[bool, str]:
     if not sql:
         return False, "Empty query"
 
-    upper = sql.upper()
-    if not upper.startswith("SELECT"):
+    upper = syntax_only(sql).upper()
+    if not re.match(r"SELECT\b", upper):
         return False, "Only SELECT statements are supported"
+
+    if len(re.findall(r"\bSELECT\b", upper)) != 1:
+        return False, "Subqueries are not supported"
 
     disallowed_pattern = re.compile(
         r"\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|REPLACE"
-        r"|MERGE|UNION|WINDOW|ROW_NUMBER|RANK|DENSE_RANK)\b"
+        r"|MERGE|UNION|INTERSECT|EXCEPT|WINDOW|OVER|ROW_NUMBER|RANK|DENSE_RANK|INTO)\b"
         r"|(?:\bWITH\b\s+\w+\s+AS\b)",
         re.IGNORECASE,
     )
@@ -355,51 +469,68 @@ def analyze_workload(
 
     for index, sql in enumerate(load_workload(workload_path), start=1):
         query = QueryInfo(f"Q{index}", sql)
-        cleaned = re.sub(r"--.*?$", "", sql, flags=re.MULTILINE)
+        cleaned = sql
         query.raw_sql = cleaned.strip()
-        tables, alias_map = _extract_tables_and_aliases(cleaned)
+        try:
+            tables, alias_map = _extract_tables_and_aliases(cleaned)
+        except ValueError as exc:
+            query.is_supported = False
+            query.exclusion_reason = str(exc)
+            analysis.queries.append(query)
+            continue
         query.tables = tables
         query.join_tables = _extract_join_pairs(cleaned, query.tables, alias_map)
 
-        where_match = re.search(
-            r"\bWHERE\b(.*?)(?:\bGROUP\s+BY\b|\bHAVING\b|\bORDER\s+BY\b|$)",
-            cleaned,
-            flags=re.IGNORECASE | re.DOTALL,
+        where_tokens = _clause_tokens(cleaned, ("WHERE",), {"GROUP", "HAVING", "ORDER", "LIMIT"})
+        query.filter_columns = _references(where_tokens, alias_map, tables)
+        query.group_columns, query.group_output_positions = _group_features(
+            cleaned, alias_map, tables
         )
-        where_clause = where_match.group(1) if where_match else ""
-        query.filter_columns = _extract_column_refs(where_clause, alias_map, query.tables)
-        query.group_columns = _extract_group_columns(cleaned, alias_map, query.tables)
         query.aggregate_functions = _extract_aggregates(cleaned)
 
         is_supported, reason = _is_supported_query(cleaned)
         query.is_supported = is_supported
         query.exclusion_reason = reason
+        if query.is_supported and not tables:
+            query.is_supported = False
+            query.exclusion_reason = "Could not resolve workload table names."
 
         if available_tables is not None and query.tables:
             missing_tables = [t for t in query.tables if t not in available_tables]
             if missing_tables:
-                db_name = getattr(engine.url, "database", "source") if hasattr(engine, "url") else "source"
+                db_name = (
+                    getattr(engine.url, "database", "source")
+                    if hasattr(engine, "url")
+                    else "source"
+                )
                 logger.info(
                     "Skipping query %s: table(s) %s do not exist in database '%s'",
                     query.query_id,
                     missing_tables,
                     db_name,
                 )
-                query.is_supported = False
-                query.exclusion_reason = f"Table(s) {missing_tables} not in database"
+                query.analysis_error = f"Table(s) {missing_tables} not in database"
                 analysis.queries.append(query)
                 continue
+
+        if not query.is_supported:
+            analysis.queries.append(query)
+            continue
 
         if engine is not None and hasattr(engine, "connect"):
             try:
                 with engine.connect() as conn:
-                    result = conn.execute(text(cleaned))
-                    rows = result.fetchall()
-                    query.source_row_count = len(rows)
+                    result = conn.execution_options(
+                        no_parameters=True, stream_results=True, max_row_buffer=1000
+                    ).exec_driver_sql(cleaned)
+                    try:
+                        query.source_row_count = sum(1 for _ in result)
+                    finally:
+                        result.close()
+                    query.source_evaluated = True
             except Exception as exc:
                 logger.warning("Failed to execute workload query %s: %s", query.query_id, exc)
-                query.is_supported = False
-                query.exclusion_reason = f"Execution failed: {exc}"
+                query.analysis_error = f"Execution failed: {exc}"
 
         analysis.queries.append(query)
 

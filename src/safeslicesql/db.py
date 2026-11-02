@@ -5,12 +5,14 @@ Provides SQLAlchemy engine creation, connection testing, and utility
 functions for interacting with MySQL source and target databases.
 
 The source engine should be used in a read-only fashion. The target
-engine requires CREATE/DROP/INSERT privileges.
+engine requires CREATE/DELETE/INSERT and cleanup DROP privileges.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
 import sqlalchemy as sa
@@ -19,6 +21,57 @@ from sqlalchemy import text
 from safeslicesql.config import AppConfig, DatabaseConfig
 
 logger = logging.getLogger("safeslicesql.db")
+
+
+def assert_distinct_databases(source: sa.Engine, target: sa.Engine, target_database: str) -> None:
+    """Verify connected database identities before allowing any target writes."""
+    same_database = "Refusing to materialize: target is identical to the source database."
+    if source is target or source.pool is target.pool:
+        raise ValueError(same_database)
+    dialect = source.dialect.name
+    if dialect != target.dialect.name or dialect not in {"mysql", "sqlite"}:
+        raise ValueError("Safe materialization requires matching MySQL or SQLite databases.")
+    with source.connect() as src, target.connect() as tgt:
+        if dialect == "mysql":
+            identity_sql = text("SELECT @@server_uuid, DATABASE(), @@lower_case_table_names")
+            src_server, src_db, src_case = src.execute(identity_sql).one()
+            tgt_server, tgt_db, tgt_case = tgt.execute(identity_sql).one()
+            if not src_server or not tgt_server or not src_db or not tgt_db:
+                raise ValueError("Could not establish source and target database identities.")
+
+            def normalize(name: str, insensitive: int) -> str:
+                return name.lower() if insensitive else name
+
+            if src_server == tgt_server and normalize(src_db, src_case) == normalize(
+                tgt_db, tgt_case
+            ):
+                raise ValueError(same_database)
+            if normalize(target_database, tgt_case) != normalize(tgt_db, tgt_case):
+                raise ValueError(
+                    "Target database name does not match the connected target database."
+                )
+        else:
+            # SQLite's connected filename resolves relative paths and URI aliases.
+            src_path = next(
+                r[2] for r in src.exec_driver_sql("PRAGMA database_list") if r[1] == "main"
+            )
+            tgt_path = next(
+                r[2] for r in tgt.exec_driver_sql("PRAGMA database_list") if r[1] == "main"
+            )
+            if src.connection.driver_connection is tgt.connection.driver_connection:
+                raise ValueError(same_database)
+            if src_path and tgt_path:
+                if Path(src_path).resolve() == Path(tgt_path).resolve() or os.path.samefile(
+                    src_path, tgt_path
+                ):
+                    raise ValueError(same_database)
+            elif (not src_path and source.url.database not in (None, "", ":memory:")) or (
+                not tgt_path and target.url.database not in (None, "", ":memory:")
+            ):
+                # Named shared-memory URI databases cannot be identified by filename.
+                raise ValueError(
+                    "Named shared-memory SQLite databases are not supported for safe materialization."
+                )
 
 
 def create_engine(

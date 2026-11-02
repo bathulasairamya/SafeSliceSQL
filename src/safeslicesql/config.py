@@ -60,7 +60,7 @@ class AppConfig:
     log_level: str = "INFO"
     log_dir: str = "logs"
 
-    def validate(self) -> list[str]:
+    def validate(self, *, require_target: bool = True) -> list[str]:
         """
         Validate the configuration and return a list of error messages.
         Returns an empty list if the configuration is valid.
@@ -76,6 +76,9 @@ class AppConfig:
             errors.append("Source database user is required.")
         if not 1 <= self.source_db.port <= 65535:
             errors.append("Source database port must be between 1 and 65535.")
+
+        if not require_target:
+            return errors
 
         # Target database must be specified
         if not self.target_db.database:
@@ -118,7 +121,24 @@ def _get_env_int(key: str, default: int) -> int:
         raise ValueError(f"Environment variable {key} must be an integer.") from None
 
 
-def load_config(env_path: str | Path | None = None) -> AppConfig:
+def _load_environment(env_path: str | Path | None = None) -> None:
+    env_file = Path(env_path) if env_path is not None else PROJECT_ROOT / ".env"
+    if env_file.exists():
+        load_dotenv(dotenv_path=env_file.resolve(), override=False)
+
+
+def load_logging_settings() -> tuple[str, str]:
+    """Read logging settings without requiring database credentials."""
+    _load_environment()
+    return _get_env("SAFESLICE_LOG_LEVEL", "INFO"), _get_env("SAFESLICE_LOG_DIR", "logs")
+
+
+def load_config(
+    env_path: str | Path | None = None,
+    *,
+    validate: bool = True,
+    require_target: bool = True,
+) -> AppConfig:
     """
     Load application configuration from a `.env` file.
 
@@ -131,7 +151,8 @@ def load_config(env_path: str | Path | None = None) -> AppConfig:
     Returns
     -------
     AppConfig
-        Validated application configuration.
+        Application configuration, validated unless validate=False. CLI callers
+        can defer validation until database-name overrides are applied.
 
     Raises
     ------
@@ -160,7 +181,7 @@ def load_config(env_path: str | Path | None = None) -> AppConfig:
 
     target_db = DatabaseConfig(
         host=_get_env("SAFESLICE_TARGET_HOST", "localhost"),
-        port=_get_env_int("SAFESLICE_TARGET_PORT", 3306),
+        port=_get_env_int("SAFESLICE_TARGET_PORT", 3306) if require_target else 3306,
         user=_get_env("SAFESLICE_TARGET_USER"),
         password=_get_env("SAFESLICE_TARGET_PASSWORD", ""),
         database=_get_env("SAFESLICE_TARGET_DATABASE"),
@@ -173,7 +194,7 @@ def load_config(env_path: str | Path | None = None) -> AppConfig:
         log_dir=_get_env("SAFESLICE_LOG_DIR", "logs"),
     )
 
-    errors = config.validate()
+    errors = config.validate(require_target=require_target) if validate else []
     if errors:
         msg = "Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
         logger.error(msg)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -26,8 +27,9 @@ from safeslicesql.config import load_config
 from safeslicesql.db import get_source_engine, get_target_engine, test_connection
 from safeslicesql.dependency_graph import build_dependency_graph
 from safeslicesql.reporting import save_run_results_csv
-from safeslicesql.sampler import select_rows
+from safeslicesql.sampler import METHODS, select_rows
 from safeslicesql.schema_analyzer import inspect_schema
+from safeslicesql.source_snapshot import capture_source_snapshot
 from safeslicesql.subset_generator import materialize_subset
 from safeslicesql.types import (
     BenchmarkResults,
@@ -38,7 +40,7 @@ from safeslicesql.types import (
     WorkloadReport,
 )
 from safeslicesql.validator import evaluate_workload, validate_subset
-from safeslicesql.workload_analyzer import analyze_workload
+from safeslicesql.workload_analyzer import analyze_workload, require_usable_workload
 
 logger = logging.getLogger("safeslicesql.benchmark")
 console = Console()
@@ -51,13 +53,42 @@ def load_benchmark_config(config_path: str | Path) -> dict[str, Any]:
         raise FileNotFoundError(f"Benchmark configuration file not found at: {config_path}")
 
     with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+        data = yaml.safe_load(f)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("Benchmark configuration must be a mapping.")
+    for section in ("matrix", "workload", "output", "database"):
+        if section in data and not isinstance(data[section], dict):
+            raise ValueError(f"Benchmark section '{section}' must be a mapping.")
 
     # Extract sections with defaults
     matrix = data.get("matrix", {})
     methods = matrix.get("methods", ["random-repair", "referential", "workload-aware"])
     budget_percents = matrix.get("budget_percents", [10, 20, 40])
     seeds = matrix.get("seeds", [42, 123, 999])
+
+    for name, values in (
+        ("methods", methods),
+        ("budget_percents", budget_percents),
+        ("seeds", seeds),
+    ):
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"matrix.{name} must be a nonempty list.")
+    if any(not isinstance(method, str) or method not in METHODS for method in methods):
+        raise ValueError(f"matrix.methods must contain only: {', '.join(METHODS)}")
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 < value <= 100
+        for value in budget_percents
+    ):
+        raise ValueError(
+            "matrix.budget_percents must contain finite percentages greater than 0 and at most 100."
+        )
+    if any(isinstance(seed, bool) or not isinstance(seed, int) for seed in seeds):
+        raise ValueError("matrix.seeds must contain integers.")
 
     workload = data.get("workload", {})
     workload_path = workload.get("path", "workloads/workload.sql")
@@ -66,6 +97,15 @@ def load_benchmark_config(config_path: str | Path) -> dict[str, Any]:
     raw_dir = output.get("raw_dir", "results/raw")
     summary_dir = output.get("summary_dir", "results/summaries")
     plots_dir = output.get("plots_dir", "results/plots")
+
+    for name, value in (
+        ("workload.path", workload_path),
+        ("output.raw_dir", raw_dir),
+        ("output.summary_dir", summary_dir),
+        ("output.plots_dir", plots_dir),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be a nonempty path string.")
 
     db_cfg = data.get("database", {})
     source_url = db_cfg.get("source_url")
@@ -135,7 +175,7 @@ def run_benchmark(
             if target_engine is None:
                 target_engine = sa.create_engine(target_url)
             if target_database_name is None:
-                target_database_name = "employees_target"
+                target_database_name = target_engine.url.database or "employees_target"
         else:
             app_cfg = load_config()
             if source_engine is None:
@@ -146,7 +186,7 @@ def run_benchmark(
                 target_database_name = app_cfg.target_db.database
 
     if target_database_name is None:
-        target_database_name = "safeslicesql_target"
+        target_database_name = target_engine.url.database or "safeslicesql_target"
 
     try:
         if not test_connection(source_engine):
@@ -168,13 +208,13 @@ def run_benchmark(
             f"Source Database: [bold]{total_source_rows:,}[/bold] total rows across [bold]{len(schema.table_names)}[/bold] tables."
         )
 
-        workload_analysis = None
-        if workload_path.exists():
-            workload_analysis = analyze_workload(workload_path, engine=source_engine)
-            console.print(
-                f"Parsed workload with [bold]{len(workload_analysis.queries)}[/bold] queries "
-                f"([bold]{len(workload_analysis.supported_queries)}[/bold] supported)."
-            )
+        initial_source_snapshot = capture_source_snapshot(source_engine)
+        workload_analysis = analyze_workload(workload_path, engine=source_engine)
+        require_usable_workload(workload_analysis, for_selection="workload-aware" in methods)
+        console.print(
+            f"Parsed workload with [bold]{len(workload_analysis.queries)}[/bold] queries "
+            f"([bold]{len(workload_analysis.supported_queries)}[/bold] supported)."
+        )
 
         total_experiments = len(methods) * len(budget_percents) * len(seeds)
         console.print(
@@ -235,16 +275,6 @@ def run_benchmark(
                         )
                         t_gen = time.perf_counter() - t0
 
-                        # 3. Validation
-                        t0 = time.perf_counter()
-                        validation = validate_subset(
-                            source_engine=source_engine,
-                            target_engine=target_engine,
-                            budget_limit=budget_rows,
-                            initial_source_row_count=total_source_rows,
-                        )
-                        t_val = time.perf_counter() - t0
-
                         # 4. Workload Evaluation
                         if workload_analysis and len(workload_analysis.supported_queries) > 0:
                             t0 = time.perf_counter()
@@ -255,7 +285,21 @@ def run_benchmark(
                             )
                             t_wl = time.perf_counter() - t0
 
-                        is_success = bool(generation.success and validation.is_valid)
+                        # 3. Validation
+                        t0 = time.perf_counter()
+                        validation = validate_subset(
+                            source_engine=source_engine,
+                            target_engine=target_engine,
+                            budget_limit=budget_rows,
+                            initial_source_row_count=total_source_rows,
+                            initial_source_snapshot=initial_source_snapshot,
+                        )
+                        t_val = time.perf_counter() - t0
+
+                        workload_failed = bool(wl_report and wl_report.failed_queries)
+                        is_success = bool(
+                            generation.success and validation.is_valid and not workload_failed
+                        )
                         if is_success:
                             surv_pct = (
                                 f"{wl_report.query_survival_rate * 100:.1f}%"
@@ -267,9 +311,17 @@ def run_benchmark(
                             )
                         else:
                             console.print("[yellow]FAILED VALIDATION[/yellow]")
-                            run_err = (
-                                "; ".join(validation.errors) if validation else "Validation failed"
-                            )
+                            run_err = "; ".join(
+                                [
+                                    generation.error_message,
+                                    *validation.errors,
+                                    *(
+                                        [q.error for q in wl_report.per_query_results if q.error]
+                                        if wl_report
+                                        else []
+                                    ),
+                                ]
+                            ).strip("; ")
 
                     except Exception as exc:
                         console.print(f"[red]CRASHED[/red] ({exc})")
@@ -290,7 +342,11 @@ def run_benchmark(
                         runtime_validation=t_val,
                         runtime_workload_eval=t_wl,
                         success=bool(
-                            validation and validation.is_valid and generation and generation.success
+                            validation
+                            and validation.is_valid
+                            and generation
+                            and generation.success
+                            and not run_err
                         ),
                         error_message=run_err,
                     )
@@ -355,10 +411,20 @@ def _compile_and_save_summaries(
                 "budget_compliant": val.budget_compliant if val else False,
                 "actual_rows": val.actual_rows if val else 0,
                 "budget_limit": val.budget_limit if val else 0,
-                "query_survival_rate": wl.query_survival_rate if wl else 0.0,
-                "overall_key_retention": wl.overall_key_retention if wl else 0.0,
-                "overall_result_retention": wl.overall_result_retention if wl else 0.0,
-                "overall_aggregate_retention": wl.overall_aggregate_retention if wl else 0.0,
+                "failed_queries": wl.failed_queries if wl else 0,
+                "survival_denominator": wl.survival_denominator if wl else 0,
+                "query_survival_rate": wl.query_survival_rate
+                if wl and wl.supported_queries
+                else None,
+                "overall_key_retention": wl.overall_key_retention
+                if wl and wl.supported_queries
+                else None,
+                "overall_result_retention": wl.overall_result_retention
+                if wl and wl.supported_queries
+                else None,
+                "overall_aggregate_retention": wl.overall_aggregate_retention
+                if wl and wl.supported_queries
+                else None,
                 "runtime_selection": r.runtime_selection,
                 "runtime_materialization": r.runtime_materialization,
                 "runtime_validation": r.runtime_validation,
@@ -394,14 +460,22 @@ def _compile_and_save_summaries(
             "total_runtime",
         ]
 
-        summary_df = (
-            df.groupby(["method", "budget_percent"])[metric_cols].agg(["mean", "std"]).reset_index()
+        group_cols = ["method", "budget_percent"]
+        counts = (
+            df.groupby(group_cols)["success"]
+            .agg(total_runs="size", successful_runs="sum")
+            .reset_index()
         )
-
-        # Flatten multi-index column names
-        summary_df.columns = [
-            f"{col[0]}_{col[1]}" if col[1] else col[0] for col in summary_df.columns
-        ]
+        counts["failed_runs"] = counts["total_runs"] - counts["successful_runs"]
+        successful = df.loc[df["success"].eq(True)]
+        metrics = (
+            successful.groupby(group_cols)[metric_cols].agg(["mean", "std", "count"]).reset_index()
+        )
+        metrics.columns = [f"{a}_{b}" if b else a for a, b in metrics.columns]
+        summary_df = counts.merge(metrics, on=group_cols, how="left")
+        for metric in metric_cols:
+            column = f"{metric}_count"
+            summary_df[column] = summary_df[column].fillna(0).astype(int)
 
         summary_csv_path = summary_dir / "benchmark_summary.csv"
         summary_df.to_csv(summary_csv_path, index=False)
@@ -412,7 +486,7 @@ def _compile_and_save_summaries(
 
         # Generate evaluation plots
         try:
-            from scripts.generate_plots import generate_all_plots
+            from safeslicesql.plots import generate_all_plots
 
             generate_all_plots(summary_csv_path, output_dir=plots_dir)
         except Exception as exc:
@@ -443,6 +517,7 @@ def _print_console_summary_table(summary_df: Any) -> None:
     )
     table.add_column("Method", style="cyan", justify="left")
     table.add_column("Budget", justify="center")
+    table.add_column("Runs (OK / failed)", justify="center")
     table.add_column("Query Survival", justify="right", style="green")
     table.add_column("Result Retention", justify="right", style="green")
     table.add_column("Key Retention", justify="right", style="blue")
@@ -453,14 +528,15 @@ def _print_console_summary_table(summary_df: Any) -> None:
     for _, row in summary_df.iterrows():
         method = str(row["method"])
         budget = f"{int(row['budget_percent'])}%"
-        surv = f"{row['query_survival_rate_mean'] * 100:.1f}%"
-        res_ret = f"{row['overall_result_retention_mean'] * 100:.1f}%"
-        key_ret = f"{row['overall_key_retention_mean'] * 100:.1f}%"
-        agg_ret = f"{row['overall_aggregate_retention_mean'] * 100:.1f}%"
-        closure = f"{row['closure_additions_mean']:.0f}"
-        runtime = f"{row['total_runtime_mean']:.2f}s"
+        surv = _format_metric(row["query_survival_rate_mean"], 100, "%", 1)
+        res_ret = _format_metric(row["overall_result_retention_mean"], 100, "%", 1)
+        key_ret = _format_metric(row["overall_key_retention_mean"], 100, "%", 1)
+        agg_ret = _format_metric(row["overall_aggregate_retention_mean"], 100, "%", 1)
+        closure = _format_metric(row["closure_additions_mean"], 1, "", 1)
+        runtime = _format_metric(row["total_runtime_mean"], 1, "s", 2)
 
-        table.add_row(method, budget, surv, res_ret, key_ret, agg_ret, closure, runtime)
+        runs = f"{int(row['successful_runs'])} / {int(row['failed_runs'])}"
+        table.add_row(method, budget, runs, surv, res_ret, key_ret, agg_ret, closure, runtime)
 
     console.print("\n")
     console.print(table)
@@ -481,29 +557,49 @@ def _write_markdown_summary(summary_df: Any, md_path: Path) -> None:
     for _, row in summary_df.iterrows():
         method = f"**{row['method']}**"
         budget = f"{int(row['budget_percent'])}%"
-        surv = f"{row['query_survival_rate_mean'] * 100:.1f}% (±{row['query_survival_rate_std'] * 100:.1f}%)"
-        res_ret = f"{row['overall_result_retention_mean'] * 100:.1f}% (±{row['overall_result_retention_std'] * 100:.1f}%)"
-        key_ret = f"{row['overall_key_retention_mean'] * 100:.1f}%"
-        agg_ret = f"{row['overall_aggregate_retention_mean'] * 100:.1f}%"
-        closure = f"{row['closure_additions_mean']:.1f}"
-        runtime = f"{row['total_runtime_mean']:.2f}s"
+        surv = _format_metric(row["query_survival_rate_mean"], 100, "%", 1)
+        res_ret = _format_metric(row["overall_result_retention_mean"], 100, "%", 1)
+        key_ret = _format_metric(row["overall_key_retention_mean"], 100, "%", 1)
+        agg_ret = _format_metric(row["overall_aggregate_retention_mean"], 100, "%", 1)
+        closure = _format_metric(row["closure_additions_mean"], 1, "", 1)
+        runtime = _format_metric(row["total_runtime_mean"], 1, "s", 2)
 
         lines.append(
             f"| {method} | {budget} | {surv} | {res_ret} | {key_ret} | {agg_ret} | {closure} | {runtime} |"
         )
 
     lines.append("")
-    lines.append("## Key Observations")
+    lines.append("## Observed Results")
     lines.append(
-        "1. **Workload-Aware Selection** achieves strictly superior query survival rates and result retentions across budgets."
+        "Means include successful runs only; missing measurements are N/A. Failed runs are reported separately. Single-run standard deviations are N/A."
     )
+    for _, row in summary_df.iterrows():
+        lines.append(
+            f"- {row['method']}, {row['budget_percent']:g}%: {int(row['successful_runs'])}/{int(row['total_runs'])} successful runs; {int(row['failed_runs'])} failed."
+        )
+    for budget, group in summary_df.groupby("budget_percent"):
+        measured = group.dropna(subset=["query_survival_rate_mean"])
+        if measured.empty:
+            lines.append(f"- Budget {budget:g}%: no successful query-survival measurements.")
+            continue
+        best = measured["query_survival_rate_mean"].max()
+        winners = measured.loc[
+            measured["query_survival_rate_mean"].map(lambda value: math.isclose(value, best)),
+            "method",
+        ].tolist()
+        lines.append(
+            f"- Budget {budget:g}%: highest observed mean query survival was {best * 100:.1f}% ({', '.join(winners)})."
+        )
     lines.append(
-        "2. **Referential Sampling** preserves structural completeness but exhibits lower query survival on workload-targeted tables."
-    )
-    lines.append(
-        "3. **Random-Repair Baseline** suffers from frequent budget exhaustion and lower retention due to arbitrary seed selection."
+        "These descriptive results do not establish statistical superiority or generalize beyond the measured runs."
     )
     lines.append("")
 
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
+
+
+def _format_metric(value, scale=1, suffix="", precision=1):
+    if value is None or not math.isfinite(float(value)):
+        return "N/A"
+    return f"{value * scale:.{precision}f}{suffix}"

@@ -86,6 +86,9 @@ def save_run_results_csv(
         "source_unchanged": val.source_unchanged if val else False,
         "total_queries": wl.total_queries if wl else 0,
         "supported_queries": wl.supported_queries if wl else 0,
+        "failed_queries": wl.failed_queries if wl else 0,
+        "source_unknown_queries": wl.source_unknown_queries if wl else 0,
+        "survival_denominator": wl.survival_denominator if wl else 0,
         "query_survival_rate": wl.query_survival_rate if wl else 0.0,
         "overall_key_retention": wl.overall_key_retention if wl else 0.0,
         "overall_result_retention": wl.overall_result_retention if wl else 0.0,
@@ -110,6 +113,7 @@ def save_run_results_csv(
             "query_id",
             "survived",
             "source_row_count",
+            "source_result_known",
             "target_row_count",
             "key_retention",
             "result_row_retention",
@@ -129,6 +133,7 @@ def save_run_results_csv(
                         "query_id": q.query_id,
                         "survived": q.survived,
                         "source_row_count": q.source_row_count,
+                        "source_result_known": q.source_result_known,
                         "target_row_count": q.target_row_count,
                         "key_retention": q.key_retention,
                         "result_row_retention": q.result_row_retention,
@@ -185,10 +190,16 @@ def print_validation_summary(report: ValidationReport) -> None:
     )
     table.add_row(
         "Source Immutability",
-        "[green]PASS[/green]" if report.source_unchanged else "[red]FAIL[/red]",
-        "Source database verified unchanged"
-        if report.source_unchanged
-        else "Source database altered",
+        "[yellow]NOT VERIFIED[/yellow]"
+        if report.source_unchanged is None
+        else ("[green]PASS[/green]" if report.source_unchanged else "[red]FAIL[/red]"),
+        "No before-run content fingerprint was supplied"
+        if report.source_unchanged is None
+        else (
+            "Source contents match the before-run fingerprint"
+            if report.source_unchanged
+            else "Source database altered"
+        ),
     )
 
     console.print(table)
@@ -212,7 +223,10 @@ def print_workload_summary(report: WorkloadReport) -> None:
         f"Queries: Total=[bold]{report.total_queries}[/bold] | "
         f"Supported=[bold]{report.supported_queries}[/bold] | "
         f"Excluded=[bold]{report.excluded_queries}[/bold] | "
-        f"Source Non-Empty=[bold]{report.source_nonempty_queries}[/bold]"
+        f"Failed=[bold]{report.failed_queries}[/bold] | "
+        f"Source Non-Empty=[bold]{report.source_nonempty_queries}[/bold] | "
+        f"Survival Denominator=[bold]{report.survival_denominator}[/bold] "
+        f"(includes {report.source_unknown_queries} unknown-source failures)"
     )
     console.print(
         f"Metrics: Survival Rate=[bold green]{report.query_survival_rate * 100:.1f}%[/bold green] | "

@@ -68,17 +68,13 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
 
     # Fetch exact row counts using a single connection
     table_row_counts: dict[str, int] = {}
-    try:
-        with engine.connect() as conn:
-            for table_name in table_names:
-                try:
-                    res = conn.execute(sa.text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}"))
-                    table_row_counts[table_name] = res.scalar() or 0
-                except Exception as exc:
-                    logger.debug("Could not query row count for table '%s': %s", table_name, exc)
-                    table_row_counts[table_name] = 0
-    except Exception as exc:
-        logger.warning("Could not establish connection to retrieve row counts: %s", exc)
+    with engine.connect() as conn:
+        for table_name in table_names:
+            try:
+                res = conn.execute(sa.text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}"))
+                table_row_counts[table_name] = int(res.scalar_one())
+            except Exception as exc:
+                raise RuntimeError(f"Could not count rows in table '{table_name}'") from exc
 
     for table_name in table_names:
         logger.debug("Introspecting table: %s", table_name)
@@ -98,7 +94,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
                 )
                 columns.append(col_meta)
         except Exception as exc:
-            logger.warning("Could not read columns for table '%s': %s", table_name, exc)
+            raise RuntimeError(f"Could not inspect columns for table '{table_name}'") from exc
 
         # 2. Primary Key
         primary_key: str | None = None
@@ -126,7 +122,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
                 logger.warning(warn_msg)
                 schema.unsupported_features.append(warn_msg)
         except Exception as exc:
-            logger.warning("Could not inspect primary key for table '%s': %s", table_name, exc)
+            raise RuntimeError(f"Could not inspect primary key for table '{table_name}'") from exc
 
         # 3. Foreign Keys
         foreign_keys: list[ForeignKeyMetadata] = []
@@ -155,9 +151,9 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
                     logger.warning(warn_msg)
                     schema.unsupported_features.append(warn_msg)
         except Exception as exc:
-            logger.warning("Could not inspect foreign keys for table '%s': %s", table_name, exc)
+            raise RuntimeError(f"Could not inspect foreign keys for table '{table_name}'") from exc
 
-        row_count = table_row_counts.get(table_name, 0)
+        row_count = table_row_counts[table_name]
 
         table_meta = TableMetadata(
             name=table_name,
@@ -182,7 +178,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
             logger.warning(warn_msg)
             schema.unsupported_features.append(warn_msg)
     except Exception as exc:
-        logger.debug("Dependency graph check during schema introspection failed: %s", exc)
+        raise RuntimeError("Dependency graph inspection failed") from exc
 
     logger.info(
         "Schema introspection complete: %d tables, %d total rows, %d unsupported feature warnings",

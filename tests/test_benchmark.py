@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 from safeslicesql.benchmark import load_benchmark_config, run_benchmark
-from scripts.generate_plots import generate_all_plots
+from safeslicesql.plots import generate_all_plots
 
 
 @pytest.fixture

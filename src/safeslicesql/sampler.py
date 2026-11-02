@@ -30,7 +30,7 @@ from safeslicesql.dependency_graph import (
     prime_foreign_key_cache,
 )
 from safeslicesql.types import SchemaMetadata, SelectionResult
-from safeslicesql.workload_analyzer import WorkloadAnalysis
+from safeslicesql.workload_analyzer import WorkloadAnalysis, require_usable_workload
 
 logger = logging.getLogger("safeslicesql.sampler")
 
@@ -131,7 +131,7 @@ def _sample_primary_keys(
     pk_columns = table_meta.effective_primary_keys or ["id"]
     quoted_table = f"`{table_name.replace('`', '``')}`"
     quoted_columns = ", ".join(f"`{column.replace('`', '``')}`" for column in pk_columns)
-    statement = sa.text(f"SELECT {quoted_columns} FROM {quoted_table}")
+    statement = sa.text(f"SELECT {quoted_columns} FROM {quoted_table} ORDER BY {quoted_columns}")
     reservoir: list[Any] = []
 
     with engine.connect() as conn:
@@ -331,6 +331,15 @@ def select_rows(
     """
     if method not in METHODS:
         raise ValueError(f"Unknown method '{method}'. Supported methods: {', '.join(METHODS)}")
+    if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
+        raise ValueError("Budget must be a non-negative integer.")
+    missing_keys = [
+        name for name, table in schema.tables.items() if not table.effective_primary_keys
+    ]
+    if missing_keys:
+        raise ValueError(
+            "Selection requires a primary key on every table: " + ", ".join(missing_keys)
+        )
 
     composite_fk_features = [
         feature
@@ -339,8 +348,7 @@ def select_rows(
     ]
     if composite_fk_features:
         raise ValueError(
-            "Selection does not support composite foreign keys: "
-            + "; ".join(composite_fk_features)
+            "Selection does not support composite foreign keys: " + "; ".join(composite_fk_features)
         )
 
     graph = _ensure_graph(schema, graph)
@@ -542,22 +550,18 @@ def _select_workload_aware(
     """
     Proposed method: SafeSliceSQL workload-aware greedy selection.
 
-    score(c | S) = ΔV(c | S) / max(1, ΔD(c | S))
-
-    Where:
-    - ΔV = marginal workload-retention value
-    - ΔD = additional rows required by dependency closure
+    Rank once by table weight / standalone closure size. Recheck incremental
+    closure cost against the selected rows when accepting each candidate.
     """
     graph = _ensure_graph(schema, graph)
     selected: dict[str, set[Any]] = {table: set() for table in schema.table_names}
     selection_log: list[str] = [f"Workload-aware selector with seed={seed}"]
 
-    if workload is None:
-        workload = WorkloadAnalysis()
+    require_usable_workload(workload, for_selection=True)
 
     table_weights: dict[str, float] = {}
     for query in workload.queries:
-        if not query.is_supported:
+        if not query.is_supported or not query.tables or query.analysis_error:
             continue
         for table_name in query.tables:
             table_weights[table_name] = table_weights.get(table_name, 0.0) + 2.0

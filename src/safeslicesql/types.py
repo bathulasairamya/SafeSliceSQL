@@ -175,18 +175,21 @@ class ValidationReport:
     budget_limit: int = 0
     tables_present: list[str] = field(default_factory=list)
     tables_missing: list[str] = field(default_factory=list)
-    source_unchanged: bool = False
+    source_unchanged: bool | None = None  # None: no content baseline was supplied
     schema_compatible: bool = False
     errors: list[str] = field(default_factory=list)
 
     @property
     def is_valid(self) -> bool:
-        """Overall validity: all checks must pass."""
+        """Structural validity plus any supplied source baseline check.
+
+        A missing historical baseline is reported as unverified, not unchanged.
+        """
         return (
             self.pk_unique
             and self.fk_violations == 0
             and self.budget_compliant
-            and self.source_unchanged
+            and self.source_unchanged is not False
             and self.schema_compatible
             and len(self.tables_missing) == 0
             and len(self.errors) == 0
@@ -207,6 +210,7 @@ class QueryResult:
     source_row_count: int = 0
     target_row_count: int = 0
     source_empty: bool = False
+    source_result_known: bool = True
     target_empty: bool = False
     survived: bool = False  # Nonempty on source and target
     key_retention: float = 0.0  # Fraction of source keys retained
@@ -228,6 +232,9 @@ class WorkloadReport:
     supported_queries: int = 0
     excluded_queries: int = 0
     source_nonempty_queries: int = 0
+    failed_queries: int = 0
+    source_unknown_queries: int = 0
+    survival_denominator: int = 0
     query_survival_rate: float = 0.0
     overall_key_retention: float = 0.0
     overall_result_retention: float = 0.0

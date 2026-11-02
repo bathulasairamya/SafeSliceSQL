@@ -4,7 +4,7 @@
 
 Edit the root `.env` file and replace `REPLACE_WITH_YOUR_MYSQL_PASSWORD` in both password settings. If your local MySQL account has a different username, change both user settings. The configured source database is `employees`; change it if your source database has another name.
 
-Use an account that can read the source and create/replace tables in the target. Avoid committing `.env` (it is ignored by Git).
+Use an account that can read the source and create tables and delete/insert rows in the target. Avoid committing `.env` (it is ignored by Git).
 
 ## 2. Create the empty target databases
 
@@ -31,7 +31,7 @@ Confirm the source connection succeeds and the database schema is supported befo
 
 ## 4. Run 1% subset generation
 
-Use a dedicated target per method. Each run may refresh/recreate tables inside the specified target database, so do not point it at a database containing data you need to keep.
+Use a dedicated target per method. Each run may transactionally refresh rows inside the specified target database, so do not point it at a database containing data you need to keep.
 
 ```powershell
 python -m safeslicesql.cli run --method random-repair --budget-percent 1 --seed 42 --source employees --target employees_random_1pct --output-dir results/1pct/random-repair

@@ -257,23 +257,17 @@ class TestSubsetMaterializer:
         schema = inspect_schema(source_engine)
         graph = build_dependency_graph(schema)
 
-        # Force matching name and host
-        source_engine.url = source_engine.url.set(database="production_db")
-        target_engine = sa.create_engine("sqlite:///:memory:")
-        target_engine.url = target_engine.url.set(database="production_db")
-
         selection = SelectionResult(method="test", seed=1, budget=10, selected_rows={})
 
         with pytest.raises(ValueError, match="identical to the source database"):
             materialize_subset(
                 source_engine=source_engine,
-                target_engine=target_engine,
+                target_engine=source_engine,
                 schema=schema,
                 selection=selection,
                 graph=graph,
-                target_database="production_db",
+                target_database="misleading_target_name",
             )
-        target_engine.dispose()
 
     def test_repeated_materialization_refreshes_cleanly(self, source_engine, target_engine):
         """Repeated runs refresh target tables without foreign key conflicts."""
@@ -350,22 +344,19 @@ class TestSubsetMaterializer:
         assert res.success is False
         assert "cycles" in res.error_message.lower()
 
-    def test_fallback_schema_creation_from_metadata(self, source_engine, target_engine):
-        """Verify schema reproduction works using SchemaMetadata when reflection is bypassed."""
+    def test_reflection_failure_does_not_fall_back(self, source_engine, target_engine):
+        """A failed reflection must not fabricate lossy schema definitions."""
         from safeslicesql.subset_generator import _reproduce_schema_on_target
 
         schema = inspect_schema(source_engine)
         graph = build_dependency_graph(schema)
         order = graph.topological_order()
 
-        # Pass a dummy/broken source engine to trigger the fallback to SchemaMetadata
         broken_engine = sa.create_engine("sqlite:///:memory:")
-        meta = _reproduce_schema_on_target(broken_engine, target_engine, schema, order)
+        with pytest.raises(sa.exc.InvalidRequestError):
+            _reproduce_schema_on_target(broken_engine, target_engine, schema, order)
         broken_engine.dispose()
-
-        assert "departments" in meta.tables
-        assert "employees" in meta.tables
-        assert "dept_emp" in meta.tables
+        assert sa.inspect(target_engine).get_table_names() == []
 
     def test_materialize_composite_pk_table(self):
         """Tables with composite primary keys (e.g. dept_emp) materialize correctly."""

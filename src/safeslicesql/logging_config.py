@@ -25,6 +25,14 @@ DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 _configured = False
 
 
+class ConsoleHandler(logging.StreamHandler):
+    """Use the current stderr when the CLI is embedded or invoked repeatedly."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.stream = sys.stderr
+        super().emit(record)
+
+
 def setup_logging(
     level: str = "INFO",
     log_dir: str = "logs",
@@ -58,7 +66,7 @@ def setup_logging(
     root_logger = logging.getLogger("safeslicesql")
 
     if _configured and not force:
-        root_logger.setLevel(log_level)
+        root_logger.setLevel(logging.DEBUG)
         for handler in root_logger.handlers:
             if isinstance(handler, logging.StreamHandler) and not isinstance(
                 handler, RotatingFileHandler
@@ -67,14 +75,16 @@ def setup_logging(
         return
 
     _configured = True
-    root_logger.handlers.clear()
-    root_logger.setLevel(log_level)
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        handler.close()
+    root_logger.setLevel(logging.DEBUG)
 
     # Formatter
     formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
 
     # Console handler (stderr)
-    console_handler = logging.StreamHandler(sys.stderr)
+    console_handler = ConsoleHandler()
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)

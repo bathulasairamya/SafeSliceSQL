@@ -18,18 +18,25 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from dataclasses import dataclass
 
 import sqlalchemy as sa
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine
 
 from safeslicesql.db import quote_ident
+from safeslicesql.result_store import ResultStore, encode_values, temporary_result_store
+from safeslicesql.schema_compatibility import table_schema_differences
+from safeslicesql.source_snapshot import SourceSnapshot, capture_source_snapshot
 from safeslicesql.types import (
     QueryResult,
     ValidationReport,
     WorkloadReport,
 )
-from safeslicesql.workload_analyzer import WorkloadAnalysis
+from safeslicesql.workload_analyzer import (
+    WorkloadAnalysis,
+    _extract_tables_and_aliases,
+    _group_features,
+)
 
 logger = logging.getLogger("safeslicesql.validator")
 
@@ -50,31 +57,64 @@ def _row_count(engine: Engine, table_name: str) -> int:
         return int(res.scalar() or 0)
 
 
-def _timed_query_rows(engine: Engine, sql: str) -> tuple[list[dict[str, Any]], float]:
-    """Execute a SQL query and return rows along with execution time in seconds."""
-    t0 = time.perf_counter()
-    with engine.connect() as conn:
-        result = conn.execute(text(sql))
-        columns = list(result.keys())
-        rows = [dict(zip(columns, row)) for row in result.fetchall()]
-    elapsed = time.perf_counter() - t0
-    return rows, elapsed
+@dataclass
+class QueryMeasurement:
+    columns: tuple[str, ...]
+    row_count: int
+    has_keys: bool
+    elapsed: float
 
 
-def _query_rows(engine: Engine, sql: str) -> list[dict[str, Any]]:
-    """Execute a SQL query and return rows as dicts."""
-    rows, _ = _timed_query_rows(engine, sql)
-    return rows
-
-
-def _normalize_rows(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
-    """Normalize row dictionaries into tuples for comparison while preserving values."""
-    normalized: list[tuple[Any, ...]] = []
-    for row in rows:
-        normalized.append(
-            tuple(sorted((k, str(v) if v is not None else None) for k, v in row.items()))
-        )
-    return normalized
+def _stream_query(
+    engine: Engine,
+    sql: str,
+    store: ResultStore,
+    *,
+    source: bool,
+    group_positions: list[int] | None,
+    expected_columns: tuple[str, ...] | None = None,
+) -> QueryMeasurement:
+    """Stream a query into an indexed temporary store, keeping at most one batch."""
+    started = time.perf_counter()
+    with engine.connect() as connection:
+        result = connection.execution_options(
+            no_parameters=True, stream_results=True, max_row_buffer=1000
+        ).exec_driver_sql(sql)
+        try:
+            columns = tuple(result.keys())
+            if expected_columns is not None and columns != expected_columns:
+                raise ValueError("Source and target query output columns differ.")
+            key_positions = [
+                i
+                for i, label in enumerate(columns)
+                if label.lower() in ("id", "emp_no", "dept_no", "pk", "key", "code")
+                or label.lower().endswith(("_id", "_no", "_code", "_key", "_pk"))
+            ]
+            batch = []
+            count = 0
+            for row in result:
+                batch.append((0, encode_values(row), int(source), int(not source)))
+                for kind, positions in ((1, key_positions), (2, group_positions)):
+                    if positions:
+                        batch.append(
+                            (
+                                kind,
+                                encode_values(row[i] for i in positions),
+                                int(source),
+                                int(not source),
+                            )
+                        )
+                count += 1
+                if len(batch) >= 1000:
+                    store.add_batch(batch)
+                    batch.clear()
+            if batch:
+                store.add_batch(batch)
+            return QueryMeasurement(
+                columns, count, bool(key_positions), time.perf_counter() - started
+            )
+        finally:
+            result.close()
 
 
 def validate_subset(
@@ -82,6 +122,31 @@ def validate_subset(
     target_engine: Engine,
     budget_limit: int,
     initial_source_row_count: int | None = None,
+    initial_source_snapshot: SourceSnapshot | None = None,
+) -> ValidationReport:
+    """Validate the subset, failing closed if any required check cannot complete."""
+    try:
+        return _validate_subset(
+            source_engine,
+            target_engine,
+            budget_limit,
+            initial_source_row_count,
+            initial_source_snapshot,
+        )
+    except Exception as exc:
+        logger.error("Subset validation could not complete: %s", exc)
+        return ValidationReport(
+            budget_limit=budget_limit,
+            errors=[f"Subset validation could not complete: {exc}"],
+        )
+
+
+def _validate_subset(
+    source_engine: Engine,
+    target_engine: Engine,
+    budget_limit: int,
+    initial_source_row_count: int | None = None,
+    initial_source_snapshot: SourceSnapshot | None = None,
 ) -> ValidationReport:
     """
     Validate a generated subset for correctness across any SQLAlchemy engine.
@@ -91,7 +156,8 @@ def validate_subset(
     - Primary-key uniqueness across all primary key columns
     - Foreign-key referential integrity (0 orphaned references)
     - Hard row budget compliance
-    - Source database unchanged (compared against initial_source_row_count if provided)
+    - Source contents unchanged when a before-run snapshot is supplied
+      (a row count alone can prove a change, but cannot prove immutability)
     """
     source_tables = _get_table_names(source_engine)
     target_tables = _get_table_names(target_engine)
@@ -101,6 +167,7 @@ def validate_subset(
     fk_violations = 0
     fk_violation_details: list[str] = []
     actual_rows = 0
+    check_errors: list[str] = []
 
     for table_name in target_tables:
         actual_rows += _row_count(target_engine, table_name)
@@ -116,6 +183,12 @@ def validate_subset(
     for table_name in target_tables:
         pk_info = target_inspector.get_pk_constraint(table_name)
         pk_cols = pk_info.get("constrained_columns", [])
+        if table_name in source_tables:
+            # Check the source's expected key even if its target constraint was lost.
+            pk_cols = (
+                source_inspector.get_pk_constraint(table_name).get("constrained_columns", [])
+                or pk_cols
+            )
         if pk_cols:
             quoted_cols = ", ".join(_quote_ident(c) for c in pk_cols)
             check_pk_sql = (
@@ -128,18 +201,20 @@ def validate_subset(
                     if dups:
                         pk_unique = False
                 except Exception as exc:
-                    logger.debug("PK check on %s failed: %s", table_name, exc)
+                    pk_unique = False
+                    check_errors.append(f"PK check on '{table_name}' failed: {exc}")
 
         # 2. Check column schema compatibility
         if table_name in source_tables:
-            src_cols = {c["name"] for c in source_inspector.get_columns(table_name)}
-            tgt_cols = {c["name"] for c in target_inspector.get_columns(table_name)}
-            if src_cols != tgt_cols:
+            differences = table_schema_differences(source_inspector, target_inspector, table_name)
+            if differences:
                 schema_compatible = False
+                check_errors.extend(differences)
 
     # 3. Real foreign-key integrity check: look for orphaned child records
     for child_table in target_tables:
-        fks = target_inspector.get_foreign_keys(child_table)
+        inspector = source_inspector if child_table in source_tables else target_inspector
+        fks = inspector.get_foreign_keys(child_table)
         for fk in fks:
             parent_table = fk.get("referred_table")
             c_cols = fk.get("constrained_columns", [])
@@ -180,14 +255,15 @@ def validate_subset(
                             f"{orphans} orphaned row(s) in '{child_table}' referencing '{parent_table}'"
                         )
                 except Exception as exc:
-                    logger.debug(
-                        "FK check between %s -> %s failed: %s", child_table, parent_table, exc
+                    check_errors.append(
+                        f"FK check between '{child_table}' -> '{parent_table}' failed: {exc}"
                     )
 
-    if initial_source_row_count is not None:
-        source_unchanged = source_total == initial_source_row_count
-    else:
-        source_unchanged = source_total == sum(_row_count(source_engine, t) for t in source_tables)
+    source_unchanged = None
+    if initial_source_snapshot is not None:
+        source_unchanged = capture_source_snapshot(source_engine) == initial_source_snapshot
+    elif initial_source_row_count is not None and source_total != initial_source_row_count:
+        source_unchanged = False
 
     report = ValidationReport(
         pk_unique=pk_unique,
@@ -202,7 +278,7 @@ def validate_subset(
         schema_compatible=schema_compatible,
     )
 
-    report.errors = []
+    report.errors = check_errors
     if not report.pk_unique:
         report.errors.append("Target table primary keys are not unique.")
     if report.fk_violations > 0:
@@ -217,8 +293,8 @@ def validate_subset(
         report.errors.append(f"Missing expected tables: {report.tables_missing}")
     if not report.schema_compatible:
         report.errors.append("Target schema differs from the source schema.")
-    if not report.source_unchanged:
-        report.errors.append("Source database row count has been modified.")
+    if report.source_unchanged is False:
+        report.errors.append("Source database contents or schema changed since the baseline.")
 
     return report
 
@@ -228,159 +304,91 @@ def evaluate_workload(
     target_engine: Engine,
     workload: WorkloadAnalysis,
 ) -> WorkloadReport:
-    """
-    Evaluate workload queries on source and target databases.
-    """
-    per_query_results: list[QueryResult] = []
+    """Evaluate supported queries; execution failures remain failed measurements."""
+    results = []
     for query in workload.queries:
+        result = QueryResult(query_id=query.query_id, query_text=query.raw_sql)
         if not query.is_supported:
-            result = QueryResult(
-                query_id=query.query_id,
-                query_text=query.raw_sql,
-                source_row_count=query.source_row_count,
-                excluded=True,
-                exclusion_reason=query.exclusion_reason,
-            )
-            per_query_results.append(result)
+            result.excluded = True
+            result.exclusion_reason = query.exclusion_reason
+            results.append(result)
             continue
-
-        t_src = 0.0
-        t_tgt = 0.0
+        result.source_row_count = query.source_row_count
+        result.source_result_known = bool(
+            getattr(query, "source_evaluated", False) or query.source_row_count > 0
+        )
+        result.source_empty = result.source_result_known and result.source_row_count == 0
         try:
-            source_rows, t_src = _timed_query_rows(source_engine, query.raw_sql)
-            target_rows, t_tgt = _timed_query_rows(target_engine, query.raw_sql)
-        except Exception as exc:
-            per_query_results.append(
-                QueryResult(
-                    query_id=query.query_id,
-                    query_text=query.raw_sql,
-                    source_row_count=query.source_row_count,
-                    execution_time_source=t_src,
-                    execution_time_target=t_tgt,
-                    excluded=True,
-                    exclusion_reason=f"Execution failed: {exc}",
+            positions = getattr(query, "group_output_positions", None)
+            if positions is None and (query.group_columns or query.aggregate_functions):
+                tables, aliases = _extract_tables_and_aliases(query.raw_sql)
+                _, positions = _group_features(query.raw_sql, aliases, tables)
+            with temporary_result_store() as store:
+                source = _stream_query(
+                    source_engine, query.raw_sql, store, source=True, group_positions=positions
                 )
-            )
-            continue
+                result.execution_time_source = source.elapsed
+                result.source_result_known = True
+                result.source_row_count = source.row_count
+                result.source_empty = source.row_count == 0
+                target = _stream_query(
+                    target_engine,
+                    query.raw_sql,
+                    store,
+                    source=False,
+                    group_positions=positions,
+                    expected_columns=source.columns,
+                )
+                result.execution_time_target = target.elapsed
+                result.target_row_count = target.row_count
+                result.target_empty = target.row_count == 0
+                result.survived = bool(source.row_count and target.row_count)
+                if source.row_count:
+                    result.result_row_retention = store.retention(0, multiset=True)
+                    result.key_retention = (
+                        store.retention(1) if source.has_keys else result.result_row_retention
+                    )
+                    # Unprojected groups and scalar aggregates use exact row retention.
+                    result.aggregate_retention = (
+                        store.retention(2) if positions else result.result_row_retention
+                    )
+                elif not target.row_count:
+                    result.key_retention = result.result_row_retention = (
+                        result.aggregate_retention
+                    ) = 1.0
 
-        source_empty = len(source_rows) == 0
-        target_empty = len(target_rows) == 0
-        result_row_retention = 0.0
-        key_retention = 0.0
-        aggregate_retention = 0.0
-        survived = bool(source_rows and target_rows)
+        except Exception as exc:
+            result.error = f"Execution/evaluation failed: {exc}"
+            result.survived = False
+            result.key_retention = result.result_row_retention = result.aggregate_retention = 0.0
+        results.append(result)
 
-        if source_rows:
-            source_norm = _normalize_rows(source_rows)
-            target_norm = _normalize_rows(target_rows)
-
-            if target_rows:
-                # Result row retention (exact tuple overlap)
-                common = set(source_norm) & set(target_norm)
-                result_row_retention = len(common) / len(source_norm) if source_norm else 0.0
-
-                # Key retention: match on ID/key columns if present, otherwise common rows
-                key_cols = [
-                    k
-                    for k in source_rows[0].keys()
-                    if k.lower() in ("id", "emp_no", "dept_no", "pk", "key", "code")
-                    or k.lower().endswith(("_id", "_no", "_code", "_key", "_pk"))
-                ]
-                if key_cols:
-                    src_keys = {tuple(str(r.get(c)) for c in key_cols) for r in source_rows}
-                    tgt_keys = {tuple(str(r.get(c)) for c in key_cols) for r in target_rows}
-                    key_retention = len(src_keys & tgt_keys) / len(src_keys) if src_keys else 0.0
-                else:
-                    key_retention = result_row_retention
-
-                # Aggregate retention: for GROUP BY queries, measure group key survival
-                if query.group_columns or query.aggregate_functions:
-                    group_col_names = [col_name for _, col_name in query.group_columns]
-                    if not group_col_names and source_rows:
-                        # Fallback to non-aggregate output columns
-                        group_col_names = [
-                            k
-                            for k in source_rows[0].keys()
-                            if not any(
-                                agg.lower() in k.lower()
-                                for agg in ("count", "sum", "avg", "min", "max", "cnt")
-                            )
-                        ]
-
-                    if group_col_names:
-                        src_groups = {
-                            tuple(str(r.get(c)) for c in group_col_names) for r in source_rows
-                        }
-                        tgt_groups = {
-                            tuple(str(r.get(c)) for c in group_col_names) for r in target_rows
-                        }
-                        aggregate_retention = (
-                            len(src_groups & tgt_groups) / len(src_groups) if src_groups else 0.0
-                        )
-                    else:
-                        aggregate_retention = 1.0 if target_rows else 0.0
-                else:
-                    aggregate_retention = result_row_retention
-            else:
-                result_row_retention = 0.0
-                key_retention = 0.0
-                aggregate_retention = 0.0
-        else:
-            if target_empty:
-                survived = False
-                result_row_retention = 1.0
-                key_retention = 1.0
-                aggregate_retention = 1.0
-
-        result = QueryResult(
-            query_id=query.query_id,
-            query_text=query.raw_sql,
-            source_row_count=len(source_rows),
-            target_row_count=len(target_rows),
-            source_empty=source_empty,
-            target_empty=target_empty,
-            survived=survived,
-            key_retention=key_retention,
-            result_row_retention=result_row_retention,
-            aggregate_retention=aggregate_retention,
-            execution_time_source=t_src,
-            execution_time_target=t_tgt,
-            excluded=False,
-        )
-        per_query_results.append(result)
-
-    total_queries = len(per_query_results)
-    supported_queries = sum(1 for q in per_query_results if not q.excluded)
-    excluded_queries = total_queries - supported_queries
-    source_nonempty_queries = sum(
-        1 for q in per_query_results if not q.excluded and q.source_row_count > 0
+    supported = [result for result in results if not result.excluded]
+    nonempty = sum(
+        result.source_result_known and result.source_row_count > 0 for result in supported
     )
-
+    unknown = sum(not result.source_result_known for result in supported)
+    denominator = nonempty + unknown
+    count = len(supported)
     return WorkloadReport(
-        per_query_results=per_query_results,
-        total_queries=total_queries,
-        supported_queries=supported_queries,
-        excluded_queries=excluded_queries,
-        source_nonempty_queries=source_nonempty_queries,
-        query_survival_rate=(
-            sum(1 for q in per_query_results if not q.excluded and q.survived) / supported_queries
-        )
-        if supported_queries
+        per_query_results=results,
+        total_queries=len(results),
+        supported_queries=count,
+        excluded_queries=len(results) - count,
+        failed_queries=sum(bool(result.error) for result in supported),
+        source_nonempty_queries=nonempty,
+        source_unknown_queries=unknown,
+        survival_denominator=denominator,
+        query_survival_rate=sum(result.survived for result in supported) / denominator
+        if denominator
         else 0.0,
-        overall_key_retention=sum(q.key_retention for q in per_query_results if not q.excluded)
-        / supported_queries
-        if supported_queries
+        overall_key_retention=sum(result.key_retention for result in supported) / count
+        if count
         else 0.0,
-        overall_result_retention=sum(
-            q.result_row_retention for q in per_query_results if not q.excluded
-        )
-        / supported_queries
-        if supported_queries
+        overall_result_retention=sum(result.result_row_retention for result in supported) / count
+        if count
         else 0.0,
-        overall_aggregate_retention=sum(
-            q.aggregate_retention for q in per_query_results if not q.excluded
-        )
-        / supported_queries
-        if supported_queries
+        overall_aggregate_retention=sum(result.aggregate_retention for result in supported) / count
+        if count
         else 0.0,
     )

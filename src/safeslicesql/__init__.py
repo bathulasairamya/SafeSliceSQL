@@ -12,6 +12,7 @@ from safeslicesql.config import AppConfig, load_config
 from safeslicesql.dependency_graph import DependencyGraph, build_dependency_graph, compute_closure
 from safeslicesql.sampler import select_rows
 from safeslicesql.schema_analyzer import inspect_schema
+from safeslicesql.source_snapshot import SourceSnapshot, capture_source_snapshot
 from safeslicesql.subset_generator import materialize_subset
 from safeslicesql.validator import evaluate_workload, validate_subset
 from safeslicesql.workload_analyzer import analyze_workload
@@ -21,6 +22,8 @@ __all__ = [
     "AppConfig",
     "load_config",
     "inspect_schema",
+    "SourceSnapshot",
+    "capture_source_snapshot",
     "build_dependency_graph",
     "compute_closure",
     "DependencyGraph",
