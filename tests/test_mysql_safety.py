@@ -52,6 +52,137 @@ def execute(engine, *statements):
             connection.exec_driver_sql(statement)
 
 
+@pytest.mark.parametrize("kind", ["existing", "csv", "xlsx"])
+def test_faculty_input_preparation_and_full_pipeline(mysql_pair, tmp_path, kind):
+    import yaml
+
+    from safeslicesql.benchmark import run_benchmark
+    from safeslicesql.config import AppConfig, DatabaseConfig
+    from safeslicesql.dataset_input import prepare_dataset
+    from safeslicesql.source_snapshot import capture_source_snapshot
+    from safeslicesql.synthetic import generate_database
+
+    source, target = mysql_pair
+    url = source.url
+    source_config = DatabaseConfig(
+        url.host, url.port, url.username, url.password or "", url.database
+    )
+    config = AppConfig(
+        source_config,
+        DatabaseConfig(url.host, url.port, url.username, url.password or "", target.url.database),
+    )
+    if kind == "existing":
+        generate_database(source, seed=77, rows=10, shape="branch")
+        before = capture_source_snapshot(source)
+        prepared = prepare_dataset(config, tmp_path / "prepared", database=source.url.database)
+    else:
+        file = tmp_path / f"faculty.{kind}"
+        if kind == "csv":
+            file.write_text('Code,Name\n001,"First, Student"\n002,Second\n', encoding="utf-8")
+        else:
+            openpyxl = pytest.importorskip("openpyxl")
+            workbook = openpyxl.Workbook()
+            workbook.active.append(["Code", "Name"])
+            workbook.active.append(["001", "First, Student"])
+            workbook.active.append(["002", "Second"])
+            workbook.save(file)
+            workbook.close()
+        prepared = prepare_dataset(config, tmp_path / "prepared", files=file)
+    engines = [sa.create_engine(prepared.source.url), sa.create_engine(prepared.target.url)]
+    try:
+        path = tmp_path / "benchmark.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "matrix": {
+                        "methods": ["random-repair", "referential", "workload-aware"],
+                        "budget_percents": [100],
+                        "seeds": [42],
+                    },
+                    "workload": {"path": str(prepared.workload)},
+                    "output": {
+                        key: str(tmp_path / key) for key in ("raw_dir", "summary_dir", "plots_dir")
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = run_benchmark(path, *engines, prepared.target.database)
+        assert result.successful_runs == 3
+        assert all(run.workload.overall_result_retention == 1 for run in result.runs)
+        assert "root" not in prepared.manifest.read_text()
+        if kind == "existing":
+            assert capture_source_snapshot(source) == before
+        else:
+            table = next(iter(prepared.tables))
+            with engines[0].connect() as connection:
+                assert connection.exec_driver_sql(
+                    f"SELECT `Code` FROM {quote_ident(table)} ORDER BY `_safeslice_id`"
+                ).scalars().all() == ["001", "002"]
+    finally:
+        for engine in engines:
+            engine.dispose()
+        names = [prepared.target.database]
+        if kind != "existing":
+            names.append(prepared.source.database)
+        with target.begin() as connection:
+            for name in names:
+                connection.exec_driver_sql(f"DROP DATABASE {quote_ident(name)}")
+
+
+def test_failed_faculty_import_cleans_up_only_its_owned_schema(mysql_pair, tmp_path):
+    from safeslicesql.config import AppConfig, DatabaseConfig
+    from safeslicesql.dataset_input import prepare_dataset
+
+    source, target = mysql_pair
+    url = source.url
+    cfg = DatabaseConfig(url.host, url.port, url.username, url.password or "", url.database)
+    config = AppConfig(cfg, cfg)
+    with target.connect() as connection:
+        before = set(connection.exec_driver_sql("SHOW DATABASES").scalars())
+    path = tmp_path / "bad.csv"
+    path.write_text("A,B\n1,2,3\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="expected 2"):
+        prepare_dataset(config, tmp_path / "prepared", files=path)
+    with target.connect() as connection:
+        assert set(connection.exec_driver_sql("SHOW DATABASES").scalars()) == before
+
+
+def test_mysql_generated_schema_suite(mysql_pair, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import safeslicesql.synthetic as synthetic
+
+    source, _ = mysql_pair
+    monkeypatch.setattr(
+        synthetic,
+        "load_config",
+        lambda **kwargs: SimpleNamespace(target_db=SimpleNamespace(url=source.url)),
+    )
+    with source.connect() as connection:
+        before = set(
+            connection.execute(
+                sa.text(
+                    "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE :prefix"
+                ),
+                {"prefix": "safeslice_check_%"},
+            ).scalars()
+        )
+    records = synthetic.run_synthetic_suite(tmp_path / "mysql_checks", cases=5, rows=10, mysql=True)
+    assert len(records) == 30
+    assert all(record["success"] for record in records), records
+    with source.connect() as connection:
+        after = set(
+            connection.execute(
+                sa.text(
+                    "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE :prefix"
+                ),
+                {"prefix": "safeslice_check_%"},
+            ).scalars()
+        )
+    assert before == after
+
+
 def materialize(source, target, selected):
     schema = inspect_schema(source)
     return materialize_subset(

@@ -124,8 +124,12 @@ class TestSchemaIntrospection:
         assert tbl.primary_key is None
         assert tbl.primary_keys == ["project_id", "employee_id"]
         assert tbl.is_composite_pk is True
-        assert all(column.is_primary_key for column in tbl.columns if column.name in tbl.primary_keys)
-        assert not any("composite primary key" in feat.lower() for feat in schema.unsupported_features)
+        assert all(
+            column.is_primary_key for column in tbl.columns if column.name in tbl.primary_keys
+        )
+        assert not any(
+            "composite primary key" in feat.lower() for feat in schema.unsupported_features
+        )
 
     def test_table_without_primary_key_detected(self, sqlite_engine):
         """Tables without primary keys are detected and reported as unsupported."""
@@ -163,15 +167,17 @@ class TestSchemaIntrospection:
 class TestLiveMySQLSchemaIntrospection:
     """Integration test on live MySQL source database if available."""
 
-    def test_live_source_schema_introspection(self, app_config):
-        """Introspect live source MySQL database if connected."""
-        from safeslicesql.db import create_engine, test_connection
+    def test_live_source_schema_introspection(self, live_source_engine, app_config):
+        """Compare reported row counts with the configured database's contents."""
+        from safeslicesql.db import quote_ident
 
-        engine = create_engine(app_config.source_db)
-        if not test_connection(engine):
-            pytest.skip("MySQL source database is not accessible. Configure .env to test.")
-
-        schema = inspect_schema(engine)
+        schema = inspect_schema(live_source_engine)
         assert schema.database_name == app_config.source_db.database
-        assert "employees" in schema.tables
-        assert schema.tables["employees"].primary_key == "emp_no"
+        assert schema.tables, "Configured source database has no tables."
+        with live_source_engine.connect() as connection:
+            for name, table in schema.tables.items():
+                count = connection.exec_driver_sql(
+                    f"SELECT COUNT(*) FROM {quote_ident(name)}"
+                ).scalar_one()
+                assert table.row_count == count
+                assert table.columns

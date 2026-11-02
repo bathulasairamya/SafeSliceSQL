@@ -113,6 +113,17 @@ def test_eof_exits_cleanly(menu):
     assert result.exit_code == 0, result.output
 
 
+def test_generated_database_action_uses_defaults_and_can_show_report(menu):
+    runner, execute = menu
+    result = runner.invoke(app, ["demo"], input="8\n\n\n\n0\n")
+    assert result.exit_code == 0, result.output
+    arguments = execute.call_args.args[0]
+    assert arguments[0] == "selftest"
+    assert "--mysql" not in arguments
+    assert arguments[arguments.index("--cases") + 1] == "5"
+    assert arguments[arguments.index("--rows") + 1] == "100"
+
+
 def test_subprocess_arguments_are_not_shell_interpreted(monkeypatch):
     settings = demo.DemoSettings("world", "target", "file with spaces.sql")
     run = Mock(return_value=Mock(returncode=0))

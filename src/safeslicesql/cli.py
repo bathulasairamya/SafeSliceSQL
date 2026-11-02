@@ -193,7 +193,7 @@ def run(
         "workloads/workload.sql",
         "--workload",
         "-w",
-        help="Path to the SQL workload file.",
+        help="Path to the SQL workload file, or 'auto' to build queries from the source schema.",
     ),
     source: Optional[str] = typer.Option(
         None,
@@ -314,6 +314,17 @@ def run(
 
         # 3. Workload Analysis
         workload_path = Path(workload)
+        if workload == "auto":
+            from safeslicesql.automatic_workload import save_automatic_workload
+
+            try:
+                workload_path = save_automatic_workload(schema, Path(output_dir) / "workloads")
+                typer.echo(
+                    f"[workload] Generated structural demonstration queries: {workload_path}"
+                )
+            except ValueError as exc:
+                typer.echo(f"[error] Cannot generate workload: {exc}", err=True)
+                raise typer.Exit(1) from exc
         if workload == "workloads/workload.sql" and config.source_db.database:
             specific_workload = Path(f"workloads/{config.source_db.database}_workload.sql")
             if specific_workload.exists():
@@ -583,6 +594,61 @@ def benchmark(
             err=True,
         )
         raise typer.Exit(code=1)
+
+
+@app.command()
+def selftest(
+    cases: int = typer.Option(5, min=1, max=100, help="Number of generated database schemas."),
+    rows: int = typer.Option(100, min=1, help="Maximum generated rows per table."),
+    seed: int = typer.Option(42, help="Seed for repeatable data and sampling."),
+    mysql: bool = typer.Option(
+        False, "--mysql", help="Use disposable MySQL schemas with target credentials from .env."
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None, "--output-dir", help="New directory for test reports and generated data."
+    ),
+    log_level: Optional[str] = typer.Option("WARNING", "--log-level"),
+) -> None:
+    """Test varied generated databases, all methods, and reproducibility."""
+    from uuid import uuid4
+
+    from safeslicesql.synthetic import run_synthetic_suite
+
+    _init(log_level)
+    output = Path(output_dir) if output_dir else Path("results/selftest") / uuid4().hex[:12]
+    typer.echo(
+        f"Generated-database checks: {'MySQL' if mysql else 'SQLite'}; {cases} cases; up to {rows} rows/table."
+    )
+
+    def progress(record):
+        status = "PASS" if record["success"] else "FAIL"
+        typer.echo(
+            f"{status} | case {record['case']} {record['shape']} | {record['method']} | budget {record['budget_percent']}%"
+        )
+        if record["error"]:
+            typer.echo(record["error"], err=True)
+
+    try:
+        records = run_synthetic_suite(
+            output, cases=cases, rows=rows, seed=seed, mysql=mysql, progress=progress
+        )
+    except Exception as exc:
+        typer.echo(f"[error] Generated-database checks failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    failed = sum(not record["success"] for record in records)
+    typer.echo(
+        f"Checks: {len(records) - failed} passed, {failed} failed. Reports: {output.resolve()}"
+    )
+    if failed:
+        raise typer.Exit(1)
+
+
+@app.command()
+def desktop() -> None:
+    """Open the guided desktop application."""
+    from safeslicesql.desktop import main
+
+    main()
 
 
 @app.command()

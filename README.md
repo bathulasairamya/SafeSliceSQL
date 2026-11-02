@@ -171,8 +171,81 @@ This checks the source connection and prints the discovered tables, primary keys
 
 ## Example Commands
 
-For a live presentation, double-click `demo.bat` in the project folder, or run
-`demo` from Command Prompt in that folder. The equivalent installed command is
+For the guided desktop interface, double-click **`demo.bat`**. Choose the data
+type, select a file/folder or find a MySQL database, move the percentage slider,
+and click **Create smaller copy**. Results show row counts and plain-language
+checks, with buttons for reports and charts. Work runs in the background so the
+window remains responsive; closing is blocked while a copy is in progress.
+Every action prepares a fresh target database. Comparison mode, method/seed
+controls, and session-only connection settings are under **Advanced options**.
+File imports still require the configured MySQL target server. No database
+password is written into result reports or run YAML files.
+
+The terminal interface is also available through **`Terminal Demo.bat`** or
+`safeslice demo`. For faculty-supplied data there, choose **9 — Load a faculty dataset**.
+Choose an existing MySQL database, a UTF-8 CSV file/folder, or an Excel `.xlsx`
+workbook. Existing databases are displayed as numbered choices. CSV/Excel input
+opens a native file/folder picker, so no full path needs to be typed. Cancel
+returns to the menu without changing the active dataset. CSV files and worksheets use the first row as column headers. MySQL
+connections come from `.env`; existing sources use source credentials, while file
+imports and newly created targets use target credentials. The target account
+needs CREATE/DROP DATABASE privileges for preparation and failure cleanup.
+
+Preparation discovers the schema, creates a new UUID-named target, and generates
+queries from its actual tables and declared foreign keys. Choose **3** to preview,
+**4** to generate/validate a subset, or **5** to compare methods. No World-specific
+workload or command edits are needed. Unsupported existing schemas are diagnosed
+before target creation. Existing source databases are read only.
+
+Each CSV or worksheet becomes a separate table. File values are stored as text
+so identifiers such as `001` remain intact. An added `_safeslice_id` identifies
+rows; colliding or duplicate headers are renamed with mappings recorded in
+`results/datasets/.../dataset.json`. Foreign keys and numeric/date types are not
+inferred from files. Use an existing relational MySQL database to demonstrate
+declared relationship preservation. Formulas in Excel are imported as text,
+without evaluation. Install Excel support with `pip install -e ".[excel]"`
+(also included in `requirements.txt`). Legacy `.xls` files must be saved as `.xlsx`.
+
+Imported sources and prepared targets remain on MySQL for the demonstration,
+using names shown in the menu and manifest. Failed preparation removes only
+databases it created and leaves the active demo settings unchanged. Generated
+queries measure structural coverage, not inferred business intent. If faculty
+supplies business SQL, choose **2** to set that workload file instead. Existing
+CLI runs and benchmark configurations also accept `auto` as the workload path.
+
+To check multiple generated databases, choose **8** in the demo menu, or run
+`safeslice selftest`. The default runs 30 checks across five schema shapes, all
+three selection methods, and budgets of 10% and 100%. SQLite is the default and
+does not require a MySQL connection. Each schema gets matching generated SQL.
+The checks cover table/row-count variation, skewed values and relationships,
+nullable foreign keys, composite primary keys, empty tables, source preservation,
+same-seed replay, target refresh, integrity, and full-copy result equality.
+
+For larger checks, run `safeslice selftest --cases 10 --rows 10000 --seed 123`.
+`--rows` is the maximum rows per generated table, not total database size.
+Different seeds change names, row counts, relationships, and values. The five
+supported topology families repeat when more than five cases are requested.
+Reports, manifests, generated workloads, and SQLite files are saved in a new
+`results/selftest/` directory for each invocation; results are never overwritten.
+
+Use `safeslice selftest --mysql` to test MySQL itself with the **target server's
+credentials from `.env`**. That account needs CREATE/DROP DATABASE privileges.
+This creates UUID-named `safeslice_check_*` source/target schemas and deletes only
+schemas created by that invocation, including after failures. It does not use
+your configured source or target database for test data. Keep this on a test
+server when increasing scale. SQLite files remain available for investigation;
+MySQL schemas are disposable, with manifests/workloads/reports retained locally.
+
+Pass/fail covers correctness and repeatability; retention at partial budgets is
+reported as a quality metric, not a guarantee of query survival. Generated tests
+do not establish production readiness or support for arbitrary schemas. MySQL 8
+InnoDB, supported FK structures, and supported SQL patterns remain the scope.
+For real databases, use demo option **2** to change the source, dedicated target,
+and matching workload together, then inspect/preview/run. Workloads for `world`
+cannot be reused unchanged on unrelated tables. Representative large datasets,
+concurrent activity, permissions, and resource limits need separate evaluation.
+
+For a terminal presentation, double-click `Terminal Demo.bat` in the project folder. The equivalent installed command is
 `safeslice demo`. It opens a numbered terminal menu: inspect the source, change
 method/budget/seed/database/workload, preview selection, generate and validate a
 subset, compare all three methods, review per-query results, or open charts.

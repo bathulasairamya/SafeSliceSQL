@@ -209,6 +209,10 @@ def run_benchmark(
         )
 
         initial_source_snapshot = capture_source_snapshot(source_engine)
+        if str(workload_path) == "auto":
+            from safeslicesql.automatic_workload import save_automatic_workload
+
+            workload_path = save_automatic_workload(schema, raw_dir / "workloads")
         workload_analysis = analyze_workload(workload_path, engine=source_engine)
         require_usable_workload(workload_analysis, for_selection="workload-aware" in methods)
         console.print(

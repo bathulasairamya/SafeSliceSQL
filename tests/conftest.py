@@ -26,3 +26,17 @@ def source_db_config(app_config: AppConfig) -> DatabaseConfig:
 def target_db_config(app_config: AppConfig) -> DatabaseConfig:
     """Target database configuration."""
     return app_config.target_db
+
+
+@pytest.fixture
+def live_source_engine(app_config):
+    """Read-only live checks follow the configured source, with owned connections."""
+    from safeslicesql.db import create_engine, test_connection
+
+    engine = create_engine(app_config.source_db)
+    try:
+        if not test_connection(engine):
+            pytest.skip("Configured MySQL source is not accessible.")
+        yield engine
+    finally:
+        engine.dispose()

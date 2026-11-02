@@ -70,59 +70,40 @@ class TestConfigLoads:
 
 @pytest.mark.db
 class TestDatabaseConnection:
-    """Database connectivity tests."""
+    """Connectivity checks for the configured source, including known samples."""
 
-    def test_source_connection(self, app_config):
-        """Can connect to the source MySQL database."""
-        from safeslicesql.db import create_engine, test_connection
+    def test_source_connection(self, live_source_engine):
+        with live_source_engine.connect() as connection:
+            assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
 
-        engine = create_engine(app_config.source_db)
-        if not test_connection(engine):
-            pytest.skip(
-                f"Cannot connect to source database '{app_config.source_db.database}' "
-                f"at {app_config.source_db.host}:{app_config.source_db.port}. "
-                "Ensure MySQL is running and set valid credentials in .env."
-            )
-        assert True
+    def test_configured_source_tables_exist(self, live_source_engine):
+        import sqlalchemy as sa
 
-    def test_employees_tables_exist(self, app_config):
-        """Employees sample database has the expected tables."""
-        from sqlalchemy import text
-
-        from safeslicesql.db import create_engine, test_connection
-
-        engine = create_engine(app_config.source_db)
-        if not test_connection(engine):
-            pytest.skip("MySQL connection not available.")
-
-        with engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = :db"),
-                {"db": app_config.source_db.database},
-            )
-            tables = {row[0] for row in result}
-
-        expected = {
-            "employees",
-            "departments",
-            "dept_emp",
-            "dept_manager",
-            "titles",
-            "salaries",
+        tables = set(sa.inspect(live_source_engine).get_table_names())
+        assert tables, "Configured source database has no tables."
+        known = {
+            "world": {"country", "city", "countrylanguage"},
+            "employees": {
+                "employees",
+                "departments",
+                "dept_emp",
+                "dept_manager",
+                "titles",
+                "salaries",
+            },
         }
-        missing = expected - tables
-        assert not missing, f"Missing tables in source database: {missing}. Found: {tables}"
+        expected = known.get(live_source_engine.url.database, set())
+        assert expected <= tables, f"Missing expected sample tables: {expected - tables}"
 
-    def test_employees_has_rows(self, app_config):
-        """Employees database tables contain data."""
-        from safeslicesql.db import create_engine, get_row_count, test_connection
+    def test_configured_source_has_rows(self, live_source_engine):
+        import sqlalchemy as sa
 
-        engine = create_engine(app_config.source_db)
-        if not test_connection(engine):
-            pytest.skip("MySQL connection not available.")
+        from safeslicesql.db import get_row_count
 
-        count = get_row_count(engine, "employees")
-        assert count > 0, "employees table is empty"
+        tables = sa.inspect(live_source_engine).get_table_names()
+        assert sum(get_row_count(live_source_engine, name) for name in tables) > 0, (
+            "Configured source has no data."
+        )
 
 
 class TestWorkloadFile:
@@ -142,29 +123,31 @@ class TestWorkloadFile:
         assert len(queries) >= 5, f"Expected at least 5 queries, found {len(queries)}"
 
     @pytest.mark.db
-    def test_workload_queries_execute(self, app_config):
-        """All workload queries execute successfully on the source database."""
-        from sqlalchemy import text
+    def test_workload_queries_execute(self, live_source_engine, tmp_path):
+        """Use source-specific SQL, or basic probes for an unfamiliar schema."""
+        import sqlalchemy as sa
 
-        from safeslicesql.db import create_engine, test_connection
-        from safeslicesql.workload_analyzer import load_workload
+        from safeslicesql.db import quote_ident
+        from safeslicesql.workload_analyzer import analyze_workload
 
-        engine = create_engine(app_config.source_db)
-        if not test_connection(engine):
-            pytest.skip("MySQL connection not available.")
-
-        queries = load_workload("workloads/workload.sql")
-        errors: list[str] = []
-        with engine.connect() as conn:
-            for i, query in enumerate(queries, 1):
-                try:
-                    result = conn.execute(text(query))
-                    rows = result.fetchall()
-                    print(f"  Q{i}: {len(rows)} rows returned")
-                except Exception as exc:
-                    errors.append(f"Q{i} failed: {exc}")
-
-        assert not errors, "Some workload queries failed:\n" + "\n".join(errors)
+        database = live_source_engine.url.database
+        workload = Path("workloads") / f"{database}_workload.sql"
+        if not workload.exists():
+            if database == "employees":
+                workload = Path("workloads/workload.sql")
+            else:
+                workload = tmp_path / "source_probes.sql"
+                tables = sa.inspect(live_source_engine).get_table_names()
+                workload.write_text(
+                    ";\n".join(f"SELECT COUNT(*) FROM {quote_ident(name)}" for name in tables),
+                    encoding="utf-8",
+                )
+        analysis = analyze_workload(workload, live_source_engine)
+        assert analysis.supported_queries, "No supported queries to test."
+        errors = [
+            query.analysis_error for query in analysis.supported_queries if query.analysis_error
+        ]
+        assert not errors, "Workload failed on configured source: " + "; ".join(errors)
 
 
 class TestCLI:
