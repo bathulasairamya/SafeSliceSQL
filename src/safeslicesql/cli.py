@@ -585,5 +585,13 @@ def benchmark(
         raise typer.Exit(code=1)
 
 
+@app.command()
+def demo() -> None:
+    """Open the interactive terminal menu for a live presentation."""
+    from safeslicesql.demo import interactive_demo
+
+    interactive_demo()
+
+
 if __name__ == "__main__":
     app()

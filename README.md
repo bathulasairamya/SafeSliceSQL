@@ -171,6 +171,21 @@ This checks the source connection and prints the discovered tables, primary keys
 
 ## Example Commands
 
+For a live presentation, double-click `demo.bat` in the project folder, or run
+`demo` from Command Prompt in that folder. The equivalent installed command is
+`safeslice demo`. It opens a numbered terminal menu: inspect the source, change
+method/budget/seed/database/workload, preview selection, generate and validate a
+subset, compare all three methods, review per-query results, or open charts.
+Press Enter at a settings prompt to keep its current value. The menu remains
+open between actions, including failed actions.
+
+The menu reads credentials from `.env`. Create the dedicated target database
+before generating a subset; generation and comparison refresh that target's
+contents. Comparison uses the currently selected budget and seed for all three
+methods. Each action saves reports under a separate `results/demo/` subfolder.
+For a short faculty demo, choose **1** to inspect, **3** to preview, **4** to
+generate, **2** to change the budget, **5** to compare, and **7** to open charts.
+
 ```bash
 python -m safeslicesql.cli inspect --database employees
 python -m safeslicesql.cli run --method random-repair --budget-percent 20 --seed 42 --source employees --target employees_random_slice --output-dir results\random-repair
