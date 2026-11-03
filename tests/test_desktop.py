@@ -84,6 +84,7 @@ def screen():
         "report_button",
         "chart_button",
         "verify_button",
+        "export_button",
         "results",
         "progress",
         "root",
@@ -142,7 +143,10 @@ def test_failed_run_never_claims_copy_ready(tmp_path):
 def test_worker_failure_unlocks_controls_and_keeps_details():
     ui = screen()
     ui.events.put(("error", "Database connection unavailable"))
-    ui._poll()
+    from unittest.mock import patch
+
+    with patch("safeslicesql.desktop.show_error"):
+        ui._poll()
     assert ui.busy is False
     ui._lock.assert_called_once_with(False)
     assert ui.details.set.call_args.args[0] == "Database connection unavailable"

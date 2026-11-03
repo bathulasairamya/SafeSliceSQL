@@ -188,11 +188,22 @@ After creating a copy, select **Results > Verify my copy**. Choose a table and u
 **Compare records** to see original/copied values side by side, **Follow connections**
 to see related records inside the copy, and **All checks** for complete counts.
 Every copied record is compared; up to three examples per table are displayed.
+Search by a field such as ID or Name to inspect your own records in both databases.
+Search is paged, read-only, and labelled with its lookup time. **Follow connections**
+shows clickable record cards: open either end to compare original/copied values.
+Records outside the copy are distinguished from missing parents required by retained
+records; individual sampling reasons are not recorded.
 Verification rereads current source/copy contents using read-only connections and
 saves `copy_verification.json` in the run folder. It reports empty tables and
 undeclared relationships explicitly; CSV/Excel imports do not prove preservation
-of original database foreign keys. **View charts** displays available PNG charts
-inside the app and explains when no successful-run charts were generated.
+of original database foreign keys. **View charts** starts with original/copy size,
+records kept per table, and broken connections. Benchmark PNGs remain under Advanced.
+**Export report** saves a self-contained HTML report with charts, checks, and examples;
+open it in a browser and use Print / Save as PDF to share a PDF.
+**Options > Previous jobs > Open saved results** reopens charts and timestamped
+verification offline without generating a copy. **Verify again** reads the current
+databases using current connection settings and checks the recorded target server.
+Errors explain corrective steps and offer Retry / Connection settings where applicable.
 Each copy operation prepares a fresh target database. Comparison mode, method/seed
 controls, and session-only connection settings are under **Options**.
 Use **Cancel** to request a safe stop and **Previous jobs** to review earlier jobs or

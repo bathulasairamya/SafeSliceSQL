@@ -18,10 +18,13 @@ from safeslicesql.desktop_service import CopyRequest, create_copy
 from safeslicesql.input_picker import available_databases
 from safeslicesql.input_preview import preview_input
 from safeslicesql.jobs import owned_jobs, read_job, recover_jobs
-from safeslicesql.result_views import show_charts, show_evidence
+from safeslicesql.record_browser import search_copy
+from safeslicesql.result_views import save_readable, show_charts, show_evidence, show_saved_results
 from safeslicesql.runtime import Limits, OperationInterrupted, execution_context
 from safeslicesql.sampler import METHODS
+from safeslicesql.saved_results import read_evidence, saved_outcome
 from safeslicesql.security import safe_error
+from safeslicesql.user_errors import show_error
 
 KINDS = {
     "MySQL database": "mysql",
@@ -334,6 +337,13 @@ class Desktop:
             ),
         )
         self.detail_button.pack(side="left")
+        self.export_button = ttk.Button(
+            buttons,
+            text="Export report",
+            state="disabled",
+            command=lambda: save_readable(self.root, self.outcome.folder) if self.outcome else None,
+        )
+        self.export_button.pack(side="left", padx=8)
         ttk.Button(
             results,
             text="Back to your data",
@@ -506,6 +516,7 @@ class Desktop:
         self.report_button.configure(state="disabled")
         self.chart_button.configure(state="disabled")
         self.verify_button.configure(state="disabled")
+        self.export_button.configure(state="disabled")
         self.results.delete(*self.results.get_children())
         self.summary.set("Creating your smaller copy…")
         self.details.set("")
@@ -520,13 +531,15 @@ class Desktop:
                     lambda text: self.events.put(("status", text)),
                     cancellation=self.cancellation,
                 ),
-            )
+            ),
+            retry=self._run,
         )
 
-    def _start(self, task):
+    def _start(self, task, retry=None):
         if self.busy:
             return
         self.busy = True
+        self.last_retry = retry or (lambda: self._start(task))
         self.cancellation.clear()
         self._lock(True)
         self.progress.start(12)
@@ -535,7 +548,8 @@ class Desktop:
         def worker():
             try:
                 with execution_context(Limits.from_env(), self.cancellation):
-                    self.events.put(task())
+                    value = task()
+                self.events.put(value)
             except OperationInterrupted as exc:
                 self.events.put(("stopped", safe_error(exc)))
             except Exception as exc:
@@ -618,7 +632,8 @@ class Desktop:
                     if getattr(self, "preview_loading", False):
                         self.preview_loading = False
                         self.input_stats.set("Inspection stopped. Refresh stats to try again.")
-                    self.summary.set("Operation stopped. No copy is accepted for use.")
+                    if getattr(self, "outcome", None) is None:
+                        self.summary.set("Operation stopped. No copy is accepted for use.")
                     self.status.set(value)
                     self.details.set(
                         value
@@ -630,7 +645,8 @@ class Desktop:
                     self.status.set(
                         "Verification finished. Inspect the records and connections in the opened window."
                     )
-                    show_evidence(self.root, value)
+                    outcome, report = value
+                    self._evidence_view(report, outcome.folder)
                 else:
                     if getattr(self, "preview_loading", False):
                         self.preview_loading = False
@@ -640,8 +656,15 @@ class Desktop:
                     self.status.set(
                         "Could not complete this action. Open Details for the reason, or check Connection settings."
                     )
-                    self.summary.set("No completed copy to show.")
+                    if getattr(self, "outcome", None) is None:
+                        self.summary.set("No completed copy to show.")
                     self.details.set(value)
+                    show_error(
+                        self.root,
+                        value,
+                        retry=getattr(self, "last_retry", None),
+                        settings=self._connections,
+                    )
         except queue.Empty:
             pass
         self.root.after(100, self._poll)
@@ -719,6 +742,7 @@ class Desktop:
         self.report_button.configure(state="normal")
         self.chart_button.configure(state="normal")
         self.verify_button.configure(state="normal")
+        self.export_button.configure(state="normal")
         comparisons = "\n".join(
             f"{r.method}: {'passed' if r.success else 'failed'}; query survival {r.workload.query_survival_rate:.1%}"
             if r.workload
@@ -750,16 +774,25 @@ class Desktop:
         recover_jobs(Path("results"))
         dialog = tk.Toplevel(self.root)
         dialog.title("Local job history")
+        dialog.geometry("920x590")
         tree = ttk.Treeview(
-            dialog, columns=("state", "phase", "folder"), show="headings", height=15
+            dialog, columns=("state", "source", "folder"), show="headings", height=12
         )
-        for column in ("state", "phase", "folder"):
+        for column in ("state", "source", "folder"):
             tree.heading(column, text=column.capitalize())
         tree.column("folder", width=500)
         tree.pack(fill="both", expand=True, padx=12, pady=12)
-        for path, record in owned_jobs(Path("results")):
+        for path, record in sorted(
+            owned_jobs(Path("results")), key=lambda item: item[1]["created_at"], reverse=True
+        ):
             tree.insert(
-                "", "end", values=(record["state"], record["phase"], str(path.parent.resolve()))
+                "",
+                "end",
+                values=(
+                    record["state"],
+                    f"{Path(record['request'].get('source', 'Unknown')).name} — {record['request'].get('budget', '?')}%",
+                    str(path.parent.resolve()),
+                ),
             )
         ttk.Label(
             dialog,
@@ -769,11 +802,19 @@ class Desktop:
         def open_job():
             selected = tree.selection()
             if selected:
-                import typer
+                folder = Path(tree.item(selected[0], "values")[2])
+                try:
+                    show_saved_results(
+                        self.root,
+                        folder,
+                        verify=lambda: self._verify_folder(folder),
+                        evidence=lambda: self._saved_evidence(folder),
+                        settings=self._connections,
+                    )
+                except (ValueError, OSError, KeyError) as exc:
+                    show_error(self.root, safe_error(exc), settings=self._connections)
 
-                typer.launch(tree.item(selected[0], "values")[2])
-
-        ttk.Button(dialog, text="Open selected job reports", command=open_job).pack(pady=8)
+        ttk.Button(dialog, text="Open saved results (no rerun)", command=open_job).pack(pady=8)
 
         def reopen():
             selected = tree.selection()
@@ -879,9 +920,42 @@ class Desktop:
 
     def _verify_copy(self):
         if self.outcome is not None and not self.busy:
-            outcome = self.outcome
-            self._start(lambda: ("evidence", collect_evidence(outcome)))
-            self.status.set("Comparing every copied record and checking its connections...")
+            self._verify_folder(self.outcome.folder)
+
+    def _verify_folder(self, folder):
+        def task():
+            outcome = saved_outcome(folder, self.config)
+            return "evidence", (outcome, collect_evidence(outcome))
+
+        self._start(task, retry=lambda: self._verify_folder(folder))
+        self.status.set("Comparing current copied records and checking their connections...")
+
+    def _evidence_view(self, report, folder, saved=False):
+        show_evidence(
+            self.root,
+            report,
+            saved=saved,
+            folder=folder,
+            search=lambda *args, **kwargs: search_copy(
+                saved_outcome(folder, self.config), *args, **kwargs
+            ),
+            refresh=lambda: self._verify_folder(folder),
+            settings=self._connections,
+        )
+
+    def _saved_evidence(self, folder):
+        try:
+            report = read_evidence(folder)
+            if report is None:
+                messagebox.showinfo(
+                    "No verification snapshot",
+                    "No detailed verification was saved for this job. Choose Verify again to inspect the existing copy without regenerating it.",
+                    parent=self.root,
+                )
+            else:
+                self._evidence_view(report, folder, saved=True)
+        except (ValueError, OSError, KeyError) as exc:
+            show_error(self.root, safe_error(exc), retry=lambda: self._saved_evidence(folder))
 
     def _open(self, kind):
         if self.outcome is not None:

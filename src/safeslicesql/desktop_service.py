@@ -13,6 +13,7 @@ from safeslicesql.experiment_config import write_experiment_config
 from safeslicesql.jobs import journal
 from safeslicesql.runtime import Limits, bounded_engine, execution_context
 from safeslicesql.sampler import METHODS
+from safeslicesql.saved_results import save_copy_summary
 from safeslicesql.types import BenchmarkResults
 
 
@@ -84,7 +85,9 @@ def _create_copy(
         engines.append(bounded_engine(prepared.target.url))
         progress("Selecting records, creating the copy, and checking the results…")
         results = run_benchmark(path, *engines, target_database_name=prepared.target.database)
-        return CopyOutcome(request, prepared, results, output)
+        outcome = CopyOutcome(request, prepared, results, output)
+        save_copy_summary(outcome)
+        return outcome
     finally:
         for engine in engines:
             engine.dispose()

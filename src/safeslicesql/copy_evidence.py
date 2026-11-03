@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
-from safeslicesql.runtime import bounded_engine, cap, checkpoint
+from safeslicesql.jobs import atomic_json
+from safeslicesql.record_browser import copy_engines
+from safeslicesql.runtime import cap, checkpoint
 from safeslicesql.schema_compatibility import table_schema_differences
 
 
@@ -41,6 +43,7 @@ def inspect_copy(source, target):
                 "source_rows": sc.scalar(sa.select(sa.func.count()).select_from(s)),
                 "copy_rows": copied,
                 "source_keys": keys,
+                "columns": list(s.c.keys()),
                 "copy_keys": ti.get_pk_constraint(name).get("constrained_columns") or [],
                 "schema_differences": table_schema_differences(si, ti, name),
                 "checked_rows": 0,
@@ -85,6 +88,7 @@ def inspect_copy(source, target):
                 parent = fk["referred_table"]
                 relationship = {
                     "from": ", ".join(child_cols),
+                    "child_columns": child_cols,
                     "parent_table": parent,
                     "parent_columns": parent_cols,
                     "checked": 0,
@@ -120,11 +124,29 @@ def inspect_copy(source, target):
                         .mappings()
                         .first()
                     )
+                    source_parent = sa.Table(parent, sa.MetaData(), autoload_with=sc)
+                    original_parent = (
+                        sc.execute(
+                            sa.select(source_parent).where(
+                                sa.and_(
+                                    *(
+                                        source_parent.c[c] == value
+                                        for c, value in zip(parent_cols, values)
+                                    )
+                                )
+                            )
+                        )
+                        .mappings()
+                        .first()
+                    )
                     relationship["examples"].append(
                         {
                             "child_key": {k: example["copy"][k] for k in keys},
                             "reference": dict(zip(child_cols, values)),
                             "parent_in_copy": dict(parent_row) if parent_row is not None else None,
+                            "parent_in_original": dict(original_parent)
+                            if original_parent is not None
+                            else None,
                         }
                     )
             entry["passed"] = (
@@ -147,18 +169,12 @@ def inspect_copy(source, target):
 
 
 def collect_evidence(outcome):
-    engines = []
-    try:
-        for config in (outcome.prepared.source, outcome.prepared.target):
-            engines.append(bounded_engine(config.url, read_only=True))
+    with copy_engines(outcome) as engines:
         report = inspect_copy(*engines)
         report.update(
             source=outcome.prepared.source.database, copy=outcome.prepared.target.database
         )
         report["file_input"] = outcome.request.kind != "mysql"
         path = outcome.folder / "copy_verification.json"
-        path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+        atomic_json(path, json.loads(json.dumps(report, default=str)))
         return report
-    finally:
-        for engine in engines:
-            engine.dispose()
