@@ -11,13 +11,13 @@ from pathlib import Path
 from uuid import uuid4
 
 import typer
-import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
 from safeslicesql.config import DatabaseConfig, load_config
+from safeslicesql.experiment_config import write_experiment_config
 from safeslicesql.sampler import METHODS
 
 console = Console()
@@ -187,31 +187,14 @@ def _faculty_input(settings: DemoSettings) -> None:
 
 
 def _comparison_config(settings: DemoSettings, output: Path) -> Path:
-    output.mkdir(parents=True, exist_ok=True)
-    path = output / "comparison.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "matrix": {
-                    "methods": list(METHODS),
-                    "budget_percents": [settings.budget],
-                    "seeds": [settings.seed],
-                },
-                "workload": {
-                    "path": "auto"
-                    if settings.workload == "auto"
-                    else str(Path(settings.workload).resolve())
-                },
-                "output": {
-                    "raw_dir": str((output / "raw").resolve()),
-                    "summary_dir": str((output / "summaries").resolve()),
-                    "plots_dir": str((output / "plots").resolve()),
-                },
-            }
-        ),
-        encoding="utf-8",
+    return write_experiment_config(
+        output / "comparison.yaml",
+        methods=list(METHODS),
+        budgets=[settings.budget],
+        seeds=[settings.seed],
+        workload=settings.workload,
+        output=output,
     )
-    return path
 
 
 def _show_results(output: Path | None) -> None:

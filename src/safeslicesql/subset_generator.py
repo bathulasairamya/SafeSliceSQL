@@ -7,7 +7,6 @@ compatible existing targets transactionally, preserving primary-key values.
 Uses transactions for safety and atomicity. Does NOT disable foreign-key checks.
 Enforces hard row budget limits and prevents source database overwrites.
 
-Owner: M1
 """
 
 from __future__ import annotations

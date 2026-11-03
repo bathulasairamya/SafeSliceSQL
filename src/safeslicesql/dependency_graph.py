@@ -9,7 +9,6 @@ all required parent rows are recursively included.
 Detects cycles and unsupported graph structures.
 Supports the v1 nullable foreign-key policy: NULL = no dependency.
 
-Owner: M1
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from typing import Any, Callable
 import networkx as nx
 import sqlalchemy as sa
 
+from safeslicesql.db import quote_ident as _quote_ident
 from safeslicesql.types import (
     ClosureResult,
     DatabaseResolutionError,
@@ -116,14 +116,6 @@ class DependencyGraph:
             return []
         return sorted(self._graph.successors(table_name))
 
-    def get_foreign_keys_to_parent(
-        self, child_table: str, parent_table: str
-    ) -> list[ForeignKeyMetadata]:
-        """Return foreign keys on child_table pointing to parent_table."""
-        if self._graph.has_edge(parent_table, child_table):
-            return list(self._graph[parent_table][child_table].get("fks", []))
-        return []
-
     def topological_order(self) -> list[str]:
         """
         Return tables in topological (parent-first) order.
@@ -161,11 +153,6 @@ def build_dependency_graph(schema: SchemaMetadata) -> DependencyGraph:
         A dependency graph with parent → child edges.
     """
     return DependencyGraph(schema)
-
-
-def _quote_ident(name: str) -> str:
-    """Safely quote a SQL identifier using backticks."""
-    return f"`{name.replace('`', '``')}`"
 
 
 def _resolve_fks_batch(
@@ -347,27 +334,6 @@ def prime_foreign_key_cache(
                 pk_values=pk_values[start : start + batch_size],
                 fk_columns=fk_columns,
             )
-
-
-def _resolve_fk_value(
-    engine: Any,
-    table_name: str,
-    pk_column: str,
-    pk_value: Any,
-    fk_column: str,
-) -> Any:
-    """
-    Retrieve the foreign-key column value for a given primary key.
-    Provides single-row resolution compatibility via _resolve_fks_batch.
-    """
-    batch_res = _resolve_fks_batch(
-        engine=engine,
-        table_name=table_name,
-        pk_columns=[pk_column],
-        pk_values=[pk_value],
-        fk_columns=[fk_column],
-    )
-    return batch_res.get(pk_value, {}).get(fk_column)
 
 
 def _resolve_parent_keys(

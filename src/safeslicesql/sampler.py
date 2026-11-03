@@ -9,7 +9,6 @@ Implements the three selection strategies:
 All methods share the same interface, budget enforcement, and
 dependency-closure pipeline for fair comparison.
 
-Owner: M2
 """
 
 from __future__ import annotations
@@ -86,22 +85,6 @@ def _all_primary_keys_for_table(
                             keys.append(val)
             return _stable_pk_values(keys)
         return []
-
-    if hasattr(engine, "connect"):
-        try:
-            with engine.connect() as conn:
-                quoted_cols = ", ".join(f"`{c.replace('`', '``')}`" for c in pk_cols)
-                quoted_table = f"`{table_name.replace('`', '``')}`"
-                stmt = sa.text(f"SELECT {quoted_cols} FROM {quoted_table} ORDER BY {quoted_cols}")
-                rows = conn.execute(stmt).mappings().all()
-                if is_composite:
-                    raw_keys = [tuple(row[c] for c in pk_cols) for row in rows]
-                else:
-                    raw_keys = [row[pk_cols[0]] for row in rows]
-                return _stable_pk_values(raw_keys)
-        except Exception as exc:  # pragma: no cover - live DB fallback
-            logger.warning("Unable to fetch PKs for table '%s': %s", table_name, exc)
-            return []
 
     return []
 
@@ -254,33 +237,6 @@ def _record_decision(selection_log: list[str], message: str) -> None:
     """Bound the in-memory decision log for large selections."""
     if len(selection_log) < SELECTION_LOG_LIMIT:
         selection_log.append(message)
-
-
-def _finalize_selection(
-    *,
-    method: str,
-    seed: int,
-    budget: int,
-    selected: dict[str, set[Any]],
-    rejected_candidates: int,
-    selection_log: list[str],
-    closure_additions: int = 0,
-) -> SelectionResult:
-    """Turn a closure dictionary into a normalized SelectionResult."""
-    normalized: dict[str, list[Any]] = {}
-    for table_name in sorted(selected):
-        normalized[table_name] = _stable_pk_values(list(selected[table_name]))
-    total_selected = _selection_total(normalized)
-    return SelectionResult(
-        method=method,
-        seed=seed,
-        budget=budget,
-        selected_rows=normalized,
-        total_selected=total_selected,
-        closure_additions=closure_additions,
-        rejected_candidates=rejected_candidates,
-        selection_log=selection_log,
-    )
 
 
 def select_rows(
@@ -578,9 +534,6 @@ def _select_workload_aware(
                 if table_name in schema.tables:
                     table_weights[table_name] = table_weights.get(table_name, 0.0) + 1.5
             table_weights[query.tables[0]] = table_weights.get(query.tables[0], 0.0) + 1.0
-
-    if not table_weights:
-        table_weights = {table_name: 1.0 for table_name in schema.table_names}
 
     candidate_rows = _candidate_rows_by_table(schema, engine, budget, seed)
     prime_foreign_key_cache(graph, engine, candidate_rows)

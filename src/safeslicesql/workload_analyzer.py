@@ -7,7 +7,6 @@ and runs each query against the source database to record baseline results.
 
 Unsupported query patterns produce a clear exclusion status with a reason.
 
-Owner: M2
 """
 
 from __future__ import annotations
@@ -311,10 +310,6 @@ def _extract_join_pairs(sql, tables, alias_map):
     return pairs or list(zip(tables, tables[1:]))
 
 
-def _extract_column_refs(clause, alias_map, tables):
-    return _references(_tokens(clause), alias_map, tables)
-
-
 def _projection_expressions(sql):
     tokens = _clause_tokens(sql, ("SELECT",), {"FROM"})
     if tokens and tokens[0].kind == "word" and tokens[0].text.upper() in {"DISTINCT", "ALL"}:
@@ -391,10 +386,6 @@ def _group_features(sql, alias_map, tables):
     return refs, mapped
 
 
-def _extract_group_columns(sql, alias_map, tables):
-    return _group_features(sql, alias_map, tables)[0]
-
-
 def _extract_aggregates(sql: str) -> list[str]:
     """Detect standard aggregate functions used in the query."""
     sql = syntax_only(sql)
@@ -435,10 +426,6 @@ def _is_supported_query(raw_sql: str) -> tuple[bool, str]:
 
     if re.search(r"\b(?:FROM|JOIN)\b", upper) is None:
         return False, "SELECT without FROM is not supported"
-
-    if "SELECT *" in upper and " FROM " in upper:
-        # basic SELECT * is allowed in the workload file, but it is not a workload-optimization target by itself
-        pass
 
     return True, ""
 

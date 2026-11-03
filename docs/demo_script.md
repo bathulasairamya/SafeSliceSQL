@@ -1,40 +1,29 @@
-# SafeSliceSQL — Demo Script
+# SafeSliceSQL live demonstration
 
-*To be completed in Phase 9.*
+Before the presentation, install `requirements.txt`, configure MySQL credentials,
+and check that the target account can create databases. Use supported schema and
+SQL features as described in [limitations](limitations.md).
 
-## Five-Minute Demonstration Plan
+1. Double-click `demo.bat` to open the desktop interface.
+2. Ask faculty to choose an existing MySQL database, CSV file/folder, or Excel
+   workbook. Use the database list or native file picker.
+3. Set the percentage slider and click **Create smaller copy**. Explain that the
+   limit counts rows across all tables and includes required parent records.
+4. Show original/copy row counts and the integrity checks. The source stays intact;
+   a fresh MySQL target is created. Open the reports folder for details.
+5. Change the percentage and run again to answer a live question.
+6. Under **Advanced options**, enable comparison of all three methods. Show the
+   charts and measured query retention; report the observed winner without
+   assuming the workload-aware method is always best.
 
-| Time | Step |
-|---|---|
-| 0:00–0:40 | Explain the problem and show source schema |
-| 0:40–1:20 | Run a baseline and show measured query-result loss |
-| 1:20–2:20 | Run SafeSliceSQL using the same budget |
-| 2:20–3:20 | Inspect the target database and show integrity validation |
-| 3:20–4:20 | Show real benchmark plots and raw metric summaries |
-| 4:20–5:00 | Explain the contribution, guarantees, and limitations |
+File imports use text columns with added row IDs. Relations between separate files
+are not inferred. Generated queries demonstrate structural coverage, not the
+business meaning of a dataset. Use a declared business workload through the
+terminal interface when that is the experiment being evaluated.
 
-## Demo Commands
+For terminal controls, double-click `Terminal Demo.bat`. Option 9 prepares faculty
+input, 3 previews selection, 4 creates/validates a copy, 5 compares methods, and
+8 runs generated-database checks. Results are stored in separate `results/` folders.
 
-```bash
-# 1. Inspect the source schema
-safeslice inspect --database employees
-
-# 2. Run baseline method
-safeslice run --method random-repair --budget-percent 20 --seed 42
-
-# 3. Run SafeSliceSQL
-safeslice run --method workload-aware --budget-percent 20 --seed 42
-
-# 4. Validate the subset
-safeslice validate --source employees --target employees_slice
-
-# 5. Run full benchmark
-safeslice benchmark --config benchmarks/benchmarks.yaml
-```
-
-## Preparation Checklist
-
-- [ ] Clean demo environment verified
-- [ ] All commands tested and working
-- [ ] Backup screenshots/terminal recordings prepared
-- [ ] No fabricated metrics or unverified claims
+Keep a prior report available if the presentation machine's database connection
+is unavailable. Clearly distinguish saved evidence from a live run.

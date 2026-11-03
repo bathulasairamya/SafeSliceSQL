@@ -1,5 +1,10 @@
 ## Phase-Wise Implementation Plan
 
+> Historical reference. This document predates the current desktop/input flows,
+> safety fixes, and metric definitions. Follow README.md for current setup and
+> docs/metrics.md for current measurements; regenerate benchmark evidence.
+
+
 The project is organized by **phases and exit criteria**, not by weeks or fixed calendar days. Complete each phase's deliverables before treating it as finished. With an 18-day deadline, use the phase order to prioritize work and overlap independent tasks where practical.
 
 ### Phase 1 — Scope, Setup, and Project Skeleton

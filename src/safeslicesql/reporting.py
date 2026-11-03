@@ -4,7 +4,6 @@ safeslicesql.reporting — Result formatting, CSV export, and logging utilities.
 Provides functions to format validation reports, workload reports, and
 benchmark results into structured output (CSV, console tables, logs).
 
-Owner: M3
 """
 
 from __future__ import annotations

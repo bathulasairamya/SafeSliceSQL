@@ -12,7 +12,6 @@ Usage:
     safeslice validate --source employees --target employees_slice
     safeslice benchmark --config benchmarks/benchmarks.yaml
 
-Owner: M3
 """
 
 from __future__ import annotations
@@ -33,6 +32,7 @@ from safeslicesql.db import (
 )
 from safeslicesql.dependency_graph import build_dependency_graph
 from safeslicesql.logging_config import setup_logging
+from safeslicesql.pipeline import run_pipeline
 from safeslicesql.reporting import (
     print_generation_summary,
     print_selection_summary,
@@ -43,8 +43,6 @@ from safeslicesql.reporting import (
 from safeslicesql.sampler import select_rows
 from safeslicesql.schema_analyzer import inspect_schema
 from safeslicesql.source_snapshot import capture_source_snapshot
-from safeslicesql.subset_generator import materialize_subset
-from safeslicesql.types import BenchmarkRunResult
 from safeslicesql.validator import evaluate_workload, validate_subset
 from safeslicesql.workload_analyzer import analyze_workload, require_usable_workload
 
@@ -343,122 +341,52 @@ def run(
             typer.echo(f"[error] Workload analysis failed: {exc}", err=True)
             raise typer.Exit(code=1) from exc
 
-        # 4. Selection
-        run_id = f"{method}_{budget_percent}pct_s{seed}_{int(time.time())}"
-        t0 = time.time()
-        try:
-            selection = select_rows(
-                schema=schema,
-                workload=workload_analysis,
-                graph=graph,
-                engine=source_engine,
-                budget=budget,
-                method=method,
-                seed=seed,
-            )
-        except Exception as exc:
-            typer.echo(f"[error] Row selection failed: {exc}", err=True)
-            raise typer.Exit(code=1)
-        runtime_selection = time.time() - t0
-        print_selection_summary(selection)
-
         if dry_run:
+            try:
+                selection = select_rows(
+                    schema=schema,
+                    workload=workload_analysis,
+                    graph=graph,
+                    engine=source_engine,
+                    budget=budget,
+                    method=method,
+                    seed=seed,
+                )
+            except Exception as exc:
+                typer.echo(f"[error] Row selection failed: {exc}", err=True)
+                raise typer.Exit(1) from exc
+            print_selection_summary(selection)
             typer.echo(
                 "[dry-run] Dry-run requested. Materialization and target validation skipped."
             )
             return
 
-        # 5. Materialization
-        t0 = time.time()
-        try:
-            generation = materialize_subset(
-                source_engine=source_engine,
-                target_engine=target_engine,
-                schema=schema,
-                selection=selection,
-                graph=graph,
-                target_database=config.target_db.database,
-            )
-        except Exception as exc:
-            typer.echo(f"[error] Materialization failed: {exc}", err=True)
-            raise typer.Exit(code=1)
-        runtime_materialization = time.time() - t0
-        print_generation_summary(generation)
-
-        if not generation.success:
-            typer.echo(f"[error] Materialization failed: {generation.error_message}", err=True)
-            raise typer.Exit(code=1)
-
-        # 7. Workload Evaluation
-        workload_report = None
-        workload_error = ""
-        runtime_workload = 0.0
-        if workload_analysis and len(workload_analysis.supported_queries) > 0:
-            t0 = time.time()
-            try:
-                workload_report = evaluate_workload(
-                    source_engine=source_engine,
-                    target_engine=target_engine,
-                    workload=workload_analysis,
-                )
-                print_workload_summary(workload_report)
-            except Exception as exc:
-                workload_error = str(exc)
-                logger.warning("Workload evaluation encountered an error: %s", exc)
-            runtime_workload = time.time() - t0
-
-        # 6. Validation
-        t0 = time.time()
-        try:
-            validation = validate_subset(
-                source_engine=source_engine,
-                target_engine=target_engine,
-                budget_limit=budget,
-                initial_source_row_count=total_source_rows,
-                initial_source_snapshot=initial_source_snapshot,
-            )
-        except Exception as exc:
-            typer.echo(f"[error] Validation failed: {exc}", err=True)
-            raise typer.Exit(code=1)
-        runtime_validation = time.time() - t0
-        print_validation_summary(validation)
-
-        if workload_report and workload_report.failed_queries:
-            workload_error = "; ".join(
-                q.error for q in workload_report.per_query_results if q.error
-            )
-
-        # 8. Save CSV results
-        run_result = BenchmarkRunResult(
-            run_id=run_id,
+        printers = {
+            "selection": print_selection_summary,
+            "generation": print_generation_summary,
+            "workload": print_workload_summary,
+            "validation": print_validation_summary,
+        }
+        run_result = run_pipeline(
+            source_engine=source_engine,
+            target_engine=target_engine,
+            schema=schema,
+            graph=graph,
+            workload=workload_analysis,
+            budget=budget,
             method=method,
             seed=seed,
+            run_id=f"{method}_{budget_percent}pct_s{seed}_{time.time_ns()}",
             budget_percent=float(budget_percent),
-            dataset_size=total_source_rows,
-            selection=selection,
-            generation=generation,
-            validation=validation,
-            workload=workload_report,
-            runtime_selection=runtime_selection,
-            runtime_materialization=runtime_materialization,
-            runtime_validation=runtime_validation,
-            runtime_workload_eval=runtime_workload,
-            success=validation.is_valid and generation.success and not workload_error,
-            error_message="; ".join(
-                [*validation.errors, *([workload_error] if workload_error else [])]
-            ),
+            target_database=config.target_db.database,
+            initial_source_snapshot=initial_source_snapshot,
+            on_stage=lambda name, value: printers[name](value),
         )
-
         csv_path = save_run_results_csv(run_result, output_dir=output_dir)
         typer.echo(f"[run] Results exported to {csv_path}")
-
-        if not validation.is_valid:
-            typer.echo("[error] Validation checks failed.", err=True)
-            raise typer.Exit(code=1)
-
-        if workload_error:
-            typer.echo("[error] Workload evaluation failed; see exported results.", err=True)
-            raise typer.Exit(code=1)
+        if not run_result.success:
+            typer.echo(f"[error] Run failed: {run_result.error_message}", err=True)
+            raise typer.Exit(1)
 
         typer.echo("[run] SafeSlice completed successfully.")
     finally:
@@ -581,9 +509,6 @@ def benchmark(
         from safeslicesql.benchmark import run_benchmark
 
         results = run_benchmark(config)
-    except NotImplementedError:
-        typer.echo("[benchmark] Phase 8 benchmark runner is being prepared.", err=True)
-        raise typer.Exit(code=1)
     except Exception as exc:
         typer.echo(f"[error] Benchmark failed: {exc}", err=True)
         raise typer.Exit(code=1)

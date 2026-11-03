@@ -1,5 +1,10 @@
 # SafeSliceSQL — Technical Project Report
 
+> Historical reference. This document predates the current desktop/input flows,
+> safety fixes, and metric definitions. Follow README.md for current setup and
+> docs/metrics.md for current measurements; regenerate benchmark evidence.
+
+
 ## Purpose and audience
 
 This report describes SafeSliceSQL based on the project documentation, current source code, and the completed 1% benchmark runs supplied in `C:\Users\prana\Downloads\results_safe_slice_sql.txt`. It is written as source material for a technical presentation. The reported experimental findings are limited to those three runs (same dataset, workload, budget, and seed); they do not establish general superiority across datasets or random seeds.

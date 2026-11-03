@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 import safeslicesql.benchmark as benchmark
 import safeslicesql.cli as cli
 import safeslicesql.config as config
+import safeslicesql.pipeline as pipeline
 import safeslicesql.result_store as result_store
 from safeslicesql.sampler import _sample_primary_keys, select_rows
 from safeslicesql.schema_analyzer import inspect_schema
@@ -267,7 +268,7 @@ def test_missing_benchmark_workload_stops_before_selection(database, tmp_path, m
         encoding="utf-8",
     )
     select = Mock(side_effect=AssertionError("selection should not run"))
-    monkeypatch.setattr(benchmark, "select_rows", select)
+    monkeypatch.setattr(pipeline, "select_rows", select)
     with pytest.raises(FileNotFoundError, match="Workload file"):
         benchmark.run_benchmark(path, source, target)
     select.assert_not_called()

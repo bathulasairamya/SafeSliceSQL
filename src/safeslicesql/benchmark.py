@@ -5,7 +5,6 @@ Executes the benchmark matrix across methods, dataset sizes, budgets,
 and seeds. Records all results to structured CSV files for reproducible
 analysis and plotting.
 
-Owner: M3
 """
 
 from __future__ import annotations
@@ -26,20 +25,15 @@ from sqlalchemy import Engine
 from safeslicesql.config import load_config
 from safeslicesql.db import get_source_engine, get_target_engine, test_connection
 from safeslicesql.dependency_graph import build_dependency_graph
+from safeslicesql.pipeline import run_pipeline
 from safeslicesql.reporting import save_run_results_csv
-from safeslicesql.sampler import METHODS, select_rows
+from safeslicesql.sampler import METHODS
 from safeslicesql.schema_analyzer import inspect_schema
 from safeslicesql.source_snapshot import capture_source_snapshot
-from safeslicesql.subset_generator import materialize_subset
 from safeslicesql.types import (
     BenchmarkResults,
     BenchmarkRunResult,
-    GenerationResult,
-    SelectionResult,
-    ValidationReport,
-    WorkloadReport,
 )
-from safeslicesql.validator import evaluate_workload, validate_subset
 from safeslicesql.workload_analyzer import analyze_workload, require_usable_workload
 
 logger = logging.getLogger("safeslicesql.benchmark")
@@ -242,118 +236,32 @@ def run_benchmark(
                         end="",
                     )
 
-                    run_err = ""
-                    selection: SelectionResult | None = None
-                    generation: GenerationResult | None = None
-                    validation: ValidationReport | None = None
-                    wl_report: WorkloadReport | None = None
-
-                    t_sel = 0.0
-                    t_gen = 0.0
-                    t_val = 0.0
-                    t_wl = 0.0
-
-                    try:
-                        # 1. Selection
-                        t0 = time.perf_counter()
-                        selection = select_rows(
-                            schema=schema,
-                            workload=workload_analysis,
-                            graph=graph,
-                            engine=source_engine,
-                            budget=budget_rows,
-                            method=method,
-                            seed=seed,
-                        )
-                        t_sel = time.perf_counter() - t0
-
-                        # 2. Materialization
-                        t0 = time.perf_counter()
-                        generation = materialize_subset(
-                            source_engine=source_engine,
-                            target_engine=target_engine,
-                            schema=schema,
-                            selection=selection,
-                            graph=graph,
-                            target_database=target_database_name,
-                        )
-                        t_gen = time.perf_counter() - t0
-
-                        # 4. Workload Evaluation
-                        if workload_analysis and len(workload_analysis.supported_queries) > 0:
-                            t0 = time.perf_counter()
-                            wl_report = evaluate_workload(
-                                source_engine=source_engine,
-                                target_engine=target_engine,
-                                workload=workload_analysis,
-                            )
-                            t_wl = time.perf_counter() - t0
-
-                        # 3. Validation
-                        t0 = time.perf_counter()
-                        validation = validate_subset(
-                            source_engine=source_engine,
-                            target_engine=target_engine,
-                            budget_limit=budget_rows,
-                            initial_source_row_count=total_source_rows,
-                            initial_source_snapshot=initial_source_snapshot,
-                        )
-                        t_val = time.perf_counter() - t0
-
-                        workload_failed = bool(wl_report and wl_report.failed_queries)
-                        is_success = bool(
-                            generation.success and validation.is_valid and not workload_failed
-                        )
-                        if is_success:
-                            surv_pct = (
-                                f"{wl_report.query_survival_rate * 100:.1f}%"
-                                if wl_report
-                                else "N/A"
-                            )
-                            console.print(
-                                f"[green]SUCCESS[/green] (surv={surv_pct}, time={t_sel + t_gen + t_val + t_wl:.2f}s)"
-                            )
-                        else:
-                            console.print("[yellow]FAILED VALIDATION[/yellow]")
-                            run_err = "; ".join(
-                                [
-                                    generation.error_message,
-                                    *validation.errors,
-                                    *(
-                                        [q.error for q in wl_report.per_query_results if q.error]
-                                        if wl_report
-                                        else []
-                                    ),
-                                ]
-                            ).strip("; ")
-
-                    except Exception as exc:
-                        console.print(f"[red]CRASHED[/red] ({exc})")
-                        run_err = str(exc)
-
-                    run_res = BenchmarkRunResult(
-                        run_id=run_id,
+                    run_res = run_pipeline(
+                        source_engine=source_engine,
+                        target_engine=target_engine,
+                        schema=schema,
+                        graph=graph,
+                        workload=workload_analysis,
+                        budget=budget_rows,
                         method=method,
                         seed=seed,
+                        run_id=run_id,
                         budget_percent=float(b_pct),
-                        dataset_size=total_source_rows,
-                        selection=selection,
-                        generation=generation,
-                        validation=validation,
-                        workload=wl_report,
-                        runtime_selection=t_sel,
-                        runtime_materialization=t_gen,
-                        runtime_validation=t_val,
-                        runtime_workload_eval=t_wl,
-                        success=bool(
-                            validation
-                            and validation.is_valid
-                            and generation
-                            and generation.success
-                            and not run_err
-                        ),
-                        error_message=run_err,
+                        target_database=target_database_name,
+                        initial_source_snapshot=initial_source_snapshot,
                     )
+                    if run_res.success:
+                        elapsed = (
+                            run_res.runtime_selection
+                            + run_res.runtime_materialization
+                            + run_res.runtime_validation
+                            + run_res.runtime_workload_eval
+                        )
+                        console.print(
+                            f"[green]SUCCESS[/green] (surv={run_res.workload.query_survival_rate:.1%}, time={elapsed:.2f}s)"
+                        )
+                    else:
+                        console.print(f"[red]FAILED[/red] ({run_res.error_message})")
                     all_runs.append(run_res)
 
                     # Export individual run CSV

@@ -6,7 +6,6 @@ and row counts from a live MySQL (or SQLAlchemy-supported) database.
 Detects and reports unsupported schema features (composite foreign keys,
 cycles, etc.) per the supported scope definition.
 
-Owner: M1
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ import logging
 import sqlalchemy as sa
 from sqlalchemy import Engine
 
+from safeslicesql.db import quote_ident as _quote_ident
 from safeslicesql.types import (
     ColumnMetadata,
     ForeignKeyMetadata,
@@ -24,11 +24,6 @@ from safeslicesql.types import (
 )
 
 logger = logging.getLogger("safeslicesql.schema_analyzer")
-
-
-def _quote_ident(name: str) -> str:
-    """Safely quote a SQL identifier using backticks."""
-    return f"`{name.replace('`', '``')}`"
 
 
 def inspect_schema(engine: Engine) -> SchemaMetadata:

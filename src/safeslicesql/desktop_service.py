@@ -5,11 +5,11 @@ from pathlib import Path
 from typing import Callable
 
 import sqlalchemy as sa
-import yaml
 
 from safeslicesql.benchmark import run_benchmark
 from safeslicesql.config import AppConfig
 from safeslicesql.dataset_input import PreparedDataset, prepare_dataset
+from safeslicesql.experiment_config import write_experiment_config
 from safeslicesql.sampler import METHODS
 from safeslicesql.types import BenchmarkResults
 
@@ -57,24 +57,13 @@ def create_copy(
         database=request.source if request.kind == "mysql" else None,
         files=None if request.kind == "mysql" else Path(request.source),
     )
-    path = output / "run.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "matrix": {
-                    "methods": list(METHODS) if request.compare else [request.method],
-                    "budget_percents": [request.budget],
-                    "seeds": [request.seed],
-                },
-                "workload": {"path": str(prepared.workload.resolve())},
-                "output": {
-                    "raw_dir": str((output / "raw").resolve()),
-                    "summary_dir": str((output / "summaries").resolve()),
-                    "plots_dir": str((output / "plots").resolve()),
-                },
-            }
-        ),
-        encoding="utf-8",
+    path = write_experiment_config(
+        output / "run.yaml",
+        methods=list(METHODS) if request.compare else [request.method],
+        budgets=[request.budget],
+        seeds=[request.seed],
+        workload=str(prepared.workload),
+        output=output,
     )
     engines = []
     try:

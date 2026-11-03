@@ -36,6 +36,12 @@ flowchart TD
 
 ## Component Responsibilities
 
+The desktop and terminal clients prepare input through `dataset_input.py` and
+build experiment configurations through `experiment_config.py`. Both CLI runs
+and benchmarks execute `pipeline.run_pipeline`, which owns selection,
+materialization, workload evaluation, validation, timing, and failure reporting.
+Failed materialization stops the pipeline before any target-side evaluation.
+
 | Component | Responsibility | Owner |
 |---|---|---|
 | `config.py` | Environment and database configuration | M1 |
@@ -55,8 +61,8 @@ flowchart TD
 ```python
 inspect_schema(engine) -> SchemaMetadata
 select_rows(schema, workload, budget, method, seed) -> SelectionResult
-materialize_subset(engine, selection, target_database) -> GenerationResult
-validate_subset(source, target) -> ValidationReport
+materialize_subset(source_engine, target_engine, schema, selection, graph, target_database) -> GenerationResult
+validate_subset(source_engine, target_engine, budget_limit, ...) -> ValidationReport
 evaluate_workload(source, target, workload) -> WorkloadReport
 run_benchmark(config) -> BenchmarkResults
 ```
@@ -71,6 +77,6 @@ See `src/safeslicesql/types.py` for complete type definitions.
 4. **Build graph** → Dependency graph from FK relationships
 5. **Select** → Method-specific row selection with closure
 6. **Materialize** → Create target DB, insert in dependency order
-7. **Validate** → Check PK/FK integrity, budget compliance
-8. **Evaluate** → Run workload on source and target, compute metrics
+7. **Evaluate** → Run workload on source and target, compute metrics
+8. **Validate** → Check PK/FK integrity, budget compliance, final source fingerprint
 9. **Report** → Save CSV results, generate plots

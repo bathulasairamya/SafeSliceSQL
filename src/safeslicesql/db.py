@@ -194,41 +194,14 @@ def test_connection(engine: sa.Engine) -> bool:
         return False
 
 
-def get_table_names(engine: sa.Engine) -> list[str]:
-    """Return a sorted list of table names in the connected database."""
-    inspector = sa.inspect(engine)
-    tables = sorted(inspector.get_table_names())
-    logger.debug("Found %d tables: %s", len(tables), tables)
-    return tables
-
-
 def quote_ident(name: str) -> str:
     """Safely quote a SQL identifier using backticks, escaping inner backticks."""
     return f"`{str(name).replace('`', '``')}`"
 
 
-_quote_ident = quote_ident
-
-
 def get_row_count(engine: sa.Engine, table_name: str) -> int:
     """Return the exact row count for a table."""
     with engine.connect() as conn:
-        result = conn.execute(text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}"))
+        result = conn.execute(text(f"SELECT COUNT(*) FROM {quote_ident(table_name)}"))
         count = result.scalar() or 0
     return count
-
-
-def database_exists(engine: sa.Engine, db_name: str) -> bool:
-    """Check whether a database exists on the connected server."""
-    if engine.dialect.name == "sqlite":
-        return True
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = :db"),
-                {"db": db_name},
-            )
-            return result.fetchone() is not None
-    except Exception as exc:
-        logger.debug("database_exists check failed on %s: %s", db_name, exc)
-        return False

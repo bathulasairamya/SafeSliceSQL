@@ -11,7 +11,6 @@ Validates generated subsets for:
 Also evaluates workload queries on both source and target databases,
 computing per-query retention metrics.
 
-Owner: M3
 """
 
 from __future__ import annotations

@@ -1,16 +1,2 @@
-# Runtime dependencies
-sqlalchemy>=2.0
-pymysql>=1.1
-networkx>=3.0
-typer>=0.9
-rich>=13.0
-pandas>=2.0
-matplotlib>=3.7
-python-dotenv>=1.0
-pyyaml>=6.0
-openpyxl>=3.1,<4
-
-# Development and test tools
-pytest>=7.0
-pytest-cov>=4.0
-ruff>=0.1.0
+# Dependency versions are maintained in pyproject.toml.
+-e .[dev,excel]
