@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from safeslicesql.runtime import checkpoint
+
 logger = logging.getLogger("safeslicesql.plots")
 
 
@@ -133,6 +135,7 @@ def generate_all_plots(
         ax.legend(title="Selection Method", frameon=True)
         ax.grid(True, linestyle="--", alpha=0.6)
         p1 = out_path / "query_survival_vs_budget.png"
+        checkpoint()
         fig.savefig(p1)
         plt.close(fig)
         generated_files.append(p1)
@@ -180,6 +183,7 @@ def generate_all_plots(
 
         fig.suptitle("SafeSliceSQL Retention Metrics Evaluation Matrix", fontsize=15, weight="bold")
         p2 = out_path / "retention_metrics_matrix.png"
+        checkpoint()
         fig.savefig(p2)
         plt.close(fig)
         generated_files.append(p2)
@@ -215,6 +219,7 @@ def generate_all_plots(
         ax.legend(title="Method", frameon=True)
         ax.grid(True, axis="y", linestyle="--", alpha=0.6)
         p3 = out_path / "closure_additions_by_method.png"
+        checkpoint()
         fig.savefig(p3)
         plt.close(fig)
         generated_files.append(p3)
@@ -255,6 +260,7 @@ def generate_all_plots(
         ax.legend(title="Method", frameon=True)
         ax.grid(True, axis="y", linestyle="--", alpha=0.6)
         p4 = out_path / "pipeline_runtime_comparison.png"
+        checkpoint()
         fig.savefig(p4)
         plt.close(fig)
         generated_files.append(p4)

@@ -18,6 +18,8 @@ from pathlib import Path
 import sqlalchemy as sa
 from sqlalchemy import Engine
 
+from safeslicesql.runtime import cap
+from safeslicesql.security import safe_error
 from safeslicesql.sql_lexer import identifier, split_statements, syntax_only, tokenize
 
 logger = logging.getLogger("safeslicesql.workload_analyzer")
@@ -511,13 +513,16 @@ def analyze_workload(
                         no_parameters=True, stream_results=True, max_row_buffer=1000
                     ).exec_driver_sql(cleaned)
                     try:
-                        query.source_row_count = sum(1 for _ in result)
+                        query.source_row_count = 0
+                        for _ in result:
+                            query.source_row_count += 1
+                            cap(query.source_row_count, "max_result_rows")
                     finally:
                         result.close()
                     query.source_evaluated = True
             except Exception as exc:
                 logger.warning("Failed to execute workload query %s: %s", query.query_id, exc)
-                query.analysis_error = f"Execution failed: {exc}"
+                query.analysis_error = f"Execution failed: {safe_error(exc)}"
 
         analysis.queries.append(query)
 

@@ -40,5 +40,6 @@ coverage.xml
 logs/
 results/
 *.db
+*.safeslice.lock
 data/
 

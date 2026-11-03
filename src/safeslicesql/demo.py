@@ -19,6 +19,7 @@ from rich.text import Text
 from safeslicesql.config import DatabaseConfig, load_config
 from safeslicesql.experiment_config import write_experiment_config
 from safeslicesql.sampler import METHODS
+from safeslicesql.security import safe_error
 
 console = Console()
 
@@ -63,7 +64,7 @@ def _execute(arguments: list[str], settings: DemoSettings) -> bool:
             check=False,
         )
     except OSError as exc:
-        console.print(f"Could not start demo action: {exc}", style="red", markup=False)
+        console.print(f"Could not start demo action: {safe_error(exc)}", style="red", markup=False)
         return False
     if result.returncode:
         console.print(
@@ -162,7 +163,9 @@ def _faculty_input(settings: DemoSettings) -> None:
         output = Path("results/datasets") / uuid4().hex[:12]
         prepared = prepare_dataset(config, output, database=database, files=files)
     except Exception as exc:
-        console.print(f"Dataset could not be prepared: {exc}", style="red", markup=False)
+        console.print(
+            f"Dataset could not be prepared: {safe_error(exc)}", style="red", markup=False
+        )
         return
     # Replace active settings only after all preparation steps succeed.
     settings.source = prepared.source.database
@@ -266,7 +269,7 @@ def interactive_demo() -> None:
     try:
         config = load_config(validate=False)
     except ValueError as exc:
-        console.print(str(exc), style="red", markup=False)
+        console.print(safe_error(exc), style="red", markup=False)
         raise typer.Exit(1) from exc
     source = config.source_db.database or "world"
     specific = Path("workloads") / f"{source}_workload.sql"
@@ -365,7 +368,7 @@ def interactive_demo() -> None:
                 elif choice == "9":
                     _faculty_input(settings)
             except (OSError, ValueError) as exc:
-                console.print(f"Action failed: {exc}", style="red", markup=False)
+                console.print(f"Action failed: {safe_error(exc)}", style="red", markup=False)
     except (typer.Abort, KeyboardInterrupt, EOFError):
         pass
     console.print("Demo closed.")

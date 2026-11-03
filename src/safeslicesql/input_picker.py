@@ -5,10 +5,11 @@ from pathlib import Path
 import sqlalchemy as sa
 
 from safeslicesql.config import AppConfig
+from safeslicesql.runtime import bounded_engine
 
 
 def available_databases(config: AppConfig) -> list[str]:
-    engine = sa.create_engine(config.source_db.url.set(database=None))
+    engine = bounded_engine(config.source_db.url.set(database=None))
     try:
         names = sa.inspect(engine).get_schema_names()
         system = {"information_schema", "mysql", "performance_schema", "sys"}

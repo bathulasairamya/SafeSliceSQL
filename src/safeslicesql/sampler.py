@@ -28,6 +28,7 @@ from safeslicesql.dependency_graph import (
     compute_closure,
     prime_foreign_key_cache,
 )
+from safeslicesql.runtime import checkpoint
 from safeslicesql.types import SchemaMetadata, SelectionResult
 from safeslicesql.workload_analyzer import WorkloadAnalysis, require_usable_workload
 
@@ -120,6 +121,7 @@ def _sample_primary_keys(
     with engine.connect() as conn:
         result = conn.execution_options(stream_results=True).execute(statement).mappings()
         for row_index, row in enumerate(result):
+            checkpoint()
             key = (
                 tuple(row[column] for column in pk_columns)
                 if len(pk_columns) > 1
@@ -370,6 +372,7 @@ def _select_random_repair(
     rng.shuffle(candidate_pairs)
 
     for candidate_index, (table_name, pk_value) in enumerate(candidate_pairs, start=1):
+        checkpoint()
         if pk_value in selected.get(table_name, set()):
             continue
         closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
@@ -448,6 +451,7 @@ def _select_referential(
         pk_values = candidate_rows.get(table_name, [])
         rng.shuffle(pk_values)
         for candidate_index, pk_value in enumerate(pk_values, start=1):
+            checkpoint()
             if pk_value in selected.get(table_name, set()):
                 continue
             closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
@@ -542,6 +546,7 @@ def _select_workload_aware(
     for table_name, pk_values in candidate_rows.items():
         workload_value = table_weights.get(table_name, 1.0)
         for candidate_index, pk_value in enumerate(pk_values, start=1):
+            checkpoint()
             closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
             dependency_cost = sum(len(rows) for rows in closure_rows.values())
             score = workload_value / max(1, dependency_cost)

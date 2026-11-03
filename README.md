@@ -4,6 +4,11 @@ SafeSliceSQL is a workload-aware database subsetting system for MySQL. It create
 
 The system compares a proposed workload-aware greedy selector against baseline sampling methods: random sampling with dependency repair and referential/table-aware sampling.
 
+Operational controls, local job recovery, credential storage, measured scale checks,
+and application-query acceptance requirements are described in
+[Production controls](docs/production_controls.md). These support controlled pilots;
+they do not certify arbitrary databases or production workloads.
+
 ## Project Goals
 
 - Reduce database size while preserving schema and dependency correctness
@@ -171,12 +176,30 @@ This checks the source connection and prints the discovered tables, primary keys
 ## Example Commands
 
 For the guided desktop interface, double-click **`demo.bat`**. Choose the data
-type, select a file/folder or find a MySQL database, move the percentage slider,
+type, select a file/folder or find a MySQL database, review its input statistics, move the percentage slider,
 and click **Create smaller copy**. Results show row counts and plain-language
 checks, with buttons for reports and charts. Work runs in the background so the
 window remains responsive; closing is blocked while a copy is in progress.
-Every action prepares a fresh target database. Comparison mode, method/seed
-controls, and session-only connection settings are under **Advanced options**.
+Input statistics show total rows, tables/sheets, and columns before any import or
+copy. **Table details** shows counts per table; **Refresh stats** rereads the input.
+The percentage slider displays the planned row limit (for example, 25% of 100
+rows means up to 25 output rows). The source is inspected again when the copy runs.
+After creating a copy, select **Results > Verify my copy**. Choose a table and use
+**Compare records** to see original/copied values side by side, **Follow connections**
+to see related records inside the copy, and **All checks** for complete counts.
+Every copied record is compared; up to three examples per table are displayed.
+Verification rereads current source/copy contents using read-only connections and
+saves `copy_verification.json` in the run folder. It reports empty tables and
+undeclared relationships explicitly; CSV/Excel imports do not prove preservation
+of original database foreign keys. **View charts** displays available PNG charts
+inside the app and explains when no successful-run charts were generated.
+Each copy operation prepares a fresh target database. Comparison mode, method/seed
+controls, and session-only connection settings are under **Options**.
+Use **Cancel** to request a safe stop and **Previous jobs** to review earlier jobs or
+restore choices for a fresh restart. Advanced options accept your application's
+SQL workload and minimum query-survival/result-retention requirements. The desktop
+requires 100% query survival by default; a structurally valid copy can still fail
+these quality requirements.
 File imports still require the configured MySQL target server. No database
 password is written into result reports or run YAML files.
 
@@ -394,3 +417,5 @@ This README describes the implemented interfaces. Supported schema/SQL limits ar
 ## License
 
 This project is intended for research and academic use within the SafeSliceSQL workflow. Specific license terms should be added according to the repository owner’s policy.
+
+The desktop uses **Create a copy**, **Options**, and **Results** tabs. Create/Cancel and progress stay visible. Use the 10/25/50/100% presets for quick size changes; Alt+1, Alt+2, and Alt+3 switch tabs. Completed copies open Results automatically.

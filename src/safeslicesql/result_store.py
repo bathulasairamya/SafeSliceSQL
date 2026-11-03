@@ -8,18 +8,28 @@ from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from safeslicesql.runtime import checkpoint, current
+
 
 class ResultStore:
     def __init__(self, connection: sqlite3.Connection):
         self.connection = connection
         connection.execute("PRAGMA cache_size=-4096")
         connection.execute("PRAGMA temp_store=FILE")
+        connection.execute("PRAGMA journal_mode=OFF")
+        if guard := current():
+            pages = max(
+                2,
+                guard.limits.max_temp_bytes // connection.execute("PRAGMA page_size").fetchone()[0],
+            )
+            connection.execute(f"PRAGMA max_page_count={pages}")
         connection.execute(
             "CREATE TABLE results (kind INTEGER, value TEXT, source INTEGER, target INTEGER, "
             "PRIMARY KEY(kind,value)) WITHOUT ROWID"
         )
 
     def add_batch(self, rows: list[tuple[int, str, int, int]]) -> None:
+        checkpoint()
         self.connection.executemany(
             "INSERT INTO results VALUES(?,?,?,?) ON CONFLICT(kind,value) DO UPDATE SET "
             "source=source+excluded.source, target=target+excluded.target",

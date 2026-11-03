@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
 import re
@@ -15,7 +16,10 @@ from sqlalchemy.dialects.mysql import LONGTEXT
 from safeslicesql.automatic_workload import save_automatic_workload
 from safeslicesql.config import AppConfig, DatabaseConfig
 from safeslicesql.db import quote_ident
+from safeslicesql.jobs import intend_schema, register_schema, removed_schema
+from safeslicesql.runtime import bounded_engine, cap, suspend_limits
 from safeslicesql.schema_analyzer import inspect_schema
+from safeslicesql.security import safe_error
 
 
 def _columns(headers):
@@ -36,8 +40,10 @@ def _columns(headers):
     return names, mapping
 
 
-def _load_table(engine, label, number, headers, rows):
+def _load_table(engine, label, number, headers, rows, prior_rows=0):
     names, mapping = _columns(headers)
+    cap(len(names) + 1, "max_columns")  # Include the generated primary key.
+    cap(number, "max_tables")
     stem = re.sub(r"[^a-zA-Z0-9_]", "_", label).strip("_")[:40] or "table"
     table_name = f"data_{number}_{stem}"
     metadata = sa.MetaData()
@@ -64,6 +70,10 @@ def _load_table(engine, label, number, headers, rows):
                     f"{label}: row {index} has {len(values)} cells; expected {len(names)}."
                 )
             count += 1
+            cap(prior_rows + count, "max_source_rows")
+            for value in values:
+                if value is not None:
+                    cap(len(str(value).encode("utf-8")), "max_cell_bytes")
             row = {
                 name: None if value is None else str(value) for name, value in zip(names, values)
             }
@@ -83,14 +93,8 @@ def _load_table(engine, label, number, headers, rows):
     }
 
 
-def import_files(engine: sa.Engine, path: Path) -> list[dict]:
-    """Stream UTF-8 CSVs or .xlsx sheets; never replace existing tables.
-
-    File values are stored as text, not guessed numeric/date types. No FK is
-    invented from a name match. The original headers are recorded in a manifest.
-    """
-    if sa.inspect(engine).get_table_names():
-        raise ValueError("File import requires a new empty source database.")
+def iter_input_tables(path: Path):
+    """Read tables without importing; handles stay open only while consuming each table."""
     files = (
         sorted(file for file in path.iterdir() if file.is_file() and file.suffix.lower() == ".csv")
         if path.is_dir()
@@ -100,7 +104,8 @@ def import_files(engine: sa.Engine, path: Path) -> list[dict]:
         raise ValueError("The folder contains no .csv files.")
     if any(not file.is_file() or file.suffix.lower() not in {".csv", ".xlsx"} for file in files):
         raise ValueError("Choose a .csv file, a folder of CSV files, or an .xlsx workbook.")
-    reports = []
+    cap(sum(file.stat().st_size for file in files), "max_input_bytes")
+    found = False
     for file in files:
         if file.suffix.lower() == ".csv":
             with file.open(encoding="utf-8-sig", newline="") as handle:
@@ -114,7 +119,9 @@ def import_files(engine: sa.Engine, path: Path) -> list[dict]:
                 headers = next(reader, None)
                 if headers is None:
                     raise ValueError(f"{file.name} is empty; a header row is required.")
-                reports.append(_load_table(engine, file.stem, len(reports) + 1, headers, reader))
+                found = True
+                yield file.stem, headers, reader
+
         else:
             try:
                 from openpyxl import load_workbook
@@ -122,6 +129,10 @@ def import_files(engine: sa.Engine, path: Path) -> list[dict]:
                 raise ValueError(
                     "Excel support requires: pip install 'safeslicesql[excel]'"
                 ) from exc
+            from zipfile import ZipFile
+
+            with ZipFile(file) as archive:
+                cap(sum(info.file_size for info in archive.infolist()), "max_input_bytes")
             workbook = load_workbook(file, read_only=True, data_only=False)
             try:
                 for sheet in workbook.worksheets:
@@ -129,13 +140,33 @@ def import_files(engine: sa.Engine, path: Path) -> list[dict]:
                     headers = next(iterator, None)
                     if headers is None or all(value is None for value in headers):
                         continue
-                    reports.append(
-                        _load_table(engine, sheet.title, len(reports) + 1, headers, iterator)
-                    )
+                    found = True
+                    yield sheet.title, headers, iterator
+
             finally:
                 workbook.close()
-    if not reports:
+    if not found:
         raise ValueError("No nonempty worksheet headers were found.")
+
+
+def import_files(engine: sa.Engine, path: Path) -> list[dict]:
+    """Stream files into a fresh database using the same reader as the input preview."""
+    if sa.inspect(engine).get_table_names():
+        raise ValueError("File import requires a new empty source database.")
+    reports = []
+    with contextlib.closing(iter_input_tables(path)) as tables:
+        for label, headers, rows in tables:
+            # Preserve the historical CSV table stem and manifest label.
+            reports.append(
+                _load_table(
+                    engine,
+                    label,
+                    len(reports) + 1,
+                    headers,
+                    rows,
+                    sum(report["rows"] for report in reports),
+                )
+            )
     return reports
 
 
@@ -175,21 +206,25 @@ def prepare_dataset(
         if files is not None:
             if not files.exists():
                 raise ValueError("Input file/folder does not exist.")
-            admin = sa.create_engine(config.target_db.url.set(database="mysql"))
+            admin = bounded_engine(config.target_db.url.set(database=None))
+            intend_schema(source_config.database)
             with admin.begin() as connection:
                 connection.exec_driver_sql(f"CREATE DATABASE {quote_ident(source_config.database)}")
             created.append(source_config.database)
-        source = sa.create_engine(source_config.url)
+            register_schema(admin, source_config.database, "imported_source")
+        source = bounded_engine(source_config.url, read_only=files is None)
         engines.append(source)
         mappings = import_files(source, files) if files is not None else []
         schema = inspect_schema(source)
         # Generate and validate the schema-dependent queries before creating a target.
         workload = save_automatic_workload(schema, output)
         if admin is None:
-            admin = sa.create_engine(config.target_db.url.set(database="mysql"))
+            admin = bounded_engine(config.target_db.url.set(database=None))
+        intend_schema(target_config.database)
         with admin.begin() as connection:
             connection.exec_driver_sql(f"CREATE DATABASE {quote_ident(target_config.database)}")
         created.append(target_config.database)
+        register_schema(admin, target_config.database, "target")
         manifest = output / "dataset.json"
         manifest.write_text(
             json.dumps(
@@ -213,16 +248,19 @@ def prepare_dataset(
             {name: table.row_count for name, table in schema.tables.items()},
             manifest,
         )
-    except Exception:
+    except BaseException:
         for engine in engines:
             engine.dispose()
         cleanup_errors = []
         for name in reversed(created):
             try:
-                with admin.begin() as connection:
+                with suspend_limits(), admin.begin() as connection:
                     connection.exec_driver_sql(f"DROP DATABASE {quote_ident(name)}")
+                removed_schema(name)
             except Exception as exc:
-                cleanup_errors.append(f"Cleanup failed for owned database {name}: {exc}")
+                cleanup_errors.append(
+                    f"Cleanup failed for owned database {name}: {safe_error(exc)}"
+                )
         if cleanup_errors:
             raise RuntimeError("; ".join(cleanup_errors))
         raise

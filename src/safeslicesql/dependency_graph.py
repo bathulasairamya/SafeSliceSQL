@@ -20,6 +20,8 @@ import networkx as nx
 import sqlalchemy as sa
 
 from safeslicesql.db import quote_ident as _quote_ident
+from safeslicesql.runtime import checkpoint
+from safeslicesql.security import safe_error
 from safeslicesql.types import (
     ClosureResult,
     DatabaseResolutionError,
@@ -304,7 +306,7 @@ def _resolve_fks_batch(
                 from safeslicesql.types import DatabaseResolutionError
 
                 raise DatabaseResolutionError(
-                    f"Failed to query foreign keys on table '{table_name}': {exc}"
+                    f"Failed to query foreign keys on table '{table_name}': {safe_error(exc)}"
                 ) from exc
 
         return {pk: tbl_cache.get(pk, {fk: None for fk in fk_columns}) for pk in pk_values}
@@ -391,7 +393,7 @@ def _resolve_parent_keys(
                         resolved[batch[row[0]]].append(key)
         except Exception as exc:
             raise DatabaseResolutionError(
-                f"Failed to resolve parent keys in '{parent.name}': {exc}"
+                f"Failed to resolve parent keys in '{parent.name}': {safe_error(exc)}"
             ) from exc
     else:
         raise DatabaseResolutionError(
@@ -455,6 +457,7 @@ def compute_closure(
     inspected_rows: dict[str, set[Any]] = {table_name: set() for table_name in graph.schema.tables}
 
     while True:
+        checkpoint()
         # Collect all rows across tables that need FK inspection
         uninspected_by_table: dict[str, list[Any]] = {}
         for table_name, pks in current_selection.items():

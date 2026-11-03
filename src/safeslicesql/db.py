@@ -19,6 +19,7 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 from safeslicesql.config import AppConfig, DatabaseConfig
+from safeslicesql.runtime import bounded_engine
 
 logger = logging.getLogger("safeslicesql.db")
 
@@ -81,6 +82,7 @@ def create_engine(
     max_overflow: int = 10,
     pool_recycle: int = 3600,
     echo: bool = False,
+    read_only: bool = False,
 ) -> sa.Engine:
     """
     Create a SQLAlchemy engine from a DatabaseConfig.
@@ -102,8 +104,9 @@ def create_engine(
     -------
     sqlalchemy.Engine
     """
-    engine = sa.create_engine(
+    engine = bounded_engine(
         config.url,
+        read_only=read_only,
         pool_size=pool_size,
         max_overflow=max_overflow,
         pool_recycle=pool_recycle,
@@ -127,6 +130,7 @@ def get_source_engine(app_config: AppConfig, **kwargs: Any) -> sa.Engine:
     inspection, workload evaluation, and source-immutability checks.
     """
     logger.info("Creating source engine for database '%s'", app_config.source_db.database)
+    kwargs["read_only"] = True
     return create_engine(app_config.source_db, **kwargs)
 
 

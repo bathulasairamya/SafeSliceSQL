@@ -23,6 +23,8 @@ from typing import Optional
 
 import typer
 
+from safeslicesql.acceptance import AcceptancePolicy
+from safeslicesql.commands import bounded_command
 from safeslicesql.config import load_config, load_logging_settings
 from safeslicesql.db import (
     create_engine,
@@ -42,6 +44,7 @@ from safeslicesql.reporting import (
 )
 from safeslicesql.sampler import select_rows
 from safeslicesql.schema_analyzer import inspect_schema
+from safeslicesql.security import safe_error
 from safeslicesql.source_snapshot import capture_source_snapshot
 from safeslicesql.validator import evaluate_workload, validate_subset
 from safeslicesql.workload_analyzer import analyze_workload, require_usable_workload
@@ -63,6 +66,7 @@ def _init(log_level: str | None = None) -> None:
 
 
 @app.command()
+@bounded_command
 def inspect(
     database: str = typer.Option(
         ...,
@@ -84,7 +88,7 @@ def inspect(
     try:
         config = load_config(validate=False, require_target=False)
     except Exception as exc:
-        typer.echo(f"[error] Failed to load configuration: {exc}", err=True)
+        typer.echo(f"[error] Failed to load configuration: {safe_error(exc)}", err=True)
         raise typer.Exit(code=1)
 
     config.source_db.database = database
@@ -92,7 +96,7 @@ def inspect(
     if errors:
         typer.echo("[error] " + "; ".join(errors), err=True)
         raise typer.Exit(code=1)
-    engine = create_engine(config.source_db)
+    engine = create_engine(config.source_db, read_only=True)
 
     if not test_connection(engine):
         typer.echo(
@@ -107,7 +111,7 @@ def inspect(
         schema = inspect_schema(engine)
         graph = build_dependency_graph(schema)
     except Exception as exc:
-        typer.echo(f"[error] Schema inspection failed: {exc}", err=True)
+        typer.echo(f"[error] Schema inspection failed: {safe_error(exc)}", err=True)
         raise typer.Exit(code=1)
 
     from rich.console import Console
@@ -168,6 +172,7 @@ def inspect(
 
 
 @app.command()
+@bounded_command
 def run(
     method: str = typer.Option(
         ...,
@@ -214,6 +219,15 @@ def run(
         "--dry-run",
         help="Simulate selection without materializing into target database.",
     ),
+    min_query_survival: float = typer.Option(
+        0.0, min=0.0, max=1.0, help="Minimum query survival fraction."
+    ),
+    min_result_retention: float = typer.Option(
+        0.0, min=0.0, max=1.0, help="Minimum exact result retention fraction."
+    ),
+    required_query: list[str] = typer.Option(
+        [], "--required-query", help="Query ID that must survive; repeatable."
+    ),
     log_level: Optional[str] = typer.Option(
         None,
         "--log-level",
@@ -250,7 +264,7 @@ def run(
     try:
         config = load_config(validate=False, require_target=not dry_run)
     except Exception as exc:
-        typer.echo(f"[error] Failed to load configuration: {exc}", err=True)
+        typer.echo(f"[error] Failed to load configuration: {safe_error(exc)}", err=True)
         raise typer.Exit(code=1)
 
     if source:
@@ -289,7 +303,7 @@ def run(
             schema = inspect_schema(source_engine)
             graph = build_dependency_graph(schema)
         except Exception as exc:
-            typer.echo(f"[error] Schema inspection failed: {exc}", err=True)
+            typer.echo(f"[error] Schema inspection failed: {safe_error(exc)}", err=True)
             raise typer.Exit(code=1)
 
         if graph.has_cycles:
@@ -321,7 +335,7 @@ def run(
                     f"[workload] Generated structural demonstration queries: {workload_path}"
                 )
             except ValueError as exc:
-                typer.echo(f"[error] Cannot generate workload: {exc}", err=True)
+                typer.echo(f"[error] Cannot generate workload: {safe_error(exc)}", err=True)
                 raise typer.Exit(1) from exc
         if workload == "workloads/workload.sql" and config.source_db.database:
             specific_workload = Path(f"workloads/{config.source_db.database}_workload.sql")
@@ -338,7 +352,7 @@ def run(
                 len(workload_analysis.supported_queries),
             )
         except Exception as exc:
-            typer.echo(f"[error] Workload analysis failed: {exc}", err=True)
+            typer.echo(f"[error] Workload analysis failed: {safe_error(exc)}", err=True)
             raise typer.Exit(code=1) from exc
 
         if dry_run:
@@ -353,7 +367,7 @@ def run(
                     seed=seed,
                 )
             except Exception as exc:
-                typer.echo(f"[error] Row selection failed: {exc}", err=True)
+                typer.echo(f"[error] Row selection failed: {safe_error(exc)}", err=True)
                 raise typer.Exit(1) from exc
             print_selection_summary(selection)
             typer.echo(
@@ -381,6 +395,9 @@ def run(
             target_database=config.target_db.database,
             initial_source_snapshot=initial_source_snapshot,
             on_stage=lambda name, value: printers[name](value),
+            acceptance=AcceptancePolicy(
+                min_query_survival, min_result_retention, tuple(required_query)
+            ),
         )
         csv_path = save_run_results_csv(run_result, output_dir=output_dir)
         typer.echo(f"[run] Results exported to {csv_path}")
@@ -396,6 +413,7 @@ def run(
 
 
 @app.command()
+@bounded_command
 def validate(
     source: str = typer.Option(
         ...,
@@ -432,7 +450,7 @@ def validate(
     try:
         config = load_config(validate=False)
     except Exception as exc:
-        typer.echo(f"[error] Failed to load configuration: {exc}", err=True)
+        typer.echo(f"[error] Failed to load configuration: {safe_error(exc)}", err=True)
         raise typer.Exit(code=1)
 
     config.source_db.database = source
@@ -461,7 +479,9 @@ def validate(
                 schema = inspect_schema(source_engine)
                 budget_limit = schema.total_row_count
             except Exception as exc:
-                typer.echo(f"[error] Cannot determine validation budget: {exc}", err=True)
+                typer.echo(
+                    f"[error] Cannot determine validation budget: {safe_error(exc)}", err=True
+                )
                 raise typer.Exit(code=1) from exc
 
         report = validate_subset(source_engine, target_engine, budget_limit=budget_limit)
@@ -474,7 +494,7 @@ def validate(
                 wl_report = evaluate_workload(source_engine, target_engine, wl)
                 print_workload_summary(wl_report)
             except Exception as exc:
-                typer.echo(f"[error] Workload evaluation failed: {exc}", err=True)
+                typer.echo(f"[error] Workload evaluation failed: {safe_error(exc)}", err=True)
                 raise typer.Exit(code=1) from exc
             if wl_report.failed_queries:
                 raise typer.Exit(code=1)
@@ -487,6 +507,7 @@ def validate(
 
 
 @app.command()
+@bounded_command
 def benchmark(
     config: str = typer.Option(
         "benchmarks/benchmarks.yaml",
@@ -510,7 +531,7 @@ def benchmark(
 
         results = run_benchmark(config)
     except Exception as exc:
-        typer.echo(f"[error] Benchmark failed: {exc}", err=True)
+        typer.echo(f"[error] Benchmark failed: {safe_error(exc)}", err=True)
         raise typer.Exit(code=1)
 
     if results.failed_runs or not results.total_runs:
@@ -522,6 +543,7 @@ def benchmark(
 
 
 @app.command()
+@bounded_command
 def selftest(
     cases: int = typer.Option(5, min=1, max=100, help="Number of generated database schemas."),
     rows: int = typer.Option(100, min=1, help="Maximum generated rows per table."),
@@ -558,7 +580,7 @@ def selftest(
             output, cases=cases, rows=rows, seed=seed, mysql=mysql, progress=progress
         )
     except Exception as exc:
-        typer.echo(f"[error] Generated-database checks failed: {exc}", err=True)
+        typer.echo(f"[error] Generated-database checks failed: {safe_error(exc)}", err=True)
         raise typer.Exit(1) from exc
     failed = sum(not record["success"] for record in records)
     typer.echo(
@@ -566,6 +588,120 @@ def selftest(
     )
     if failed:
         raise typer.Exit(1)
+
+
+@app.command()
+@bounded_command
+def scalecheck(
+    rows: list[int] = typer.Option([1000, 10000], "--rows"),
+    seed: list[int] = typer.Option([42, 123], "--seed"),
+    cases: int = typer.Option(5, min=1, max=100),
+    mysql: bool = typer.Option(False, "--mysql"),
+    log_level: Optional[str] = typer.Option("WARNING", "--log-level"),
+) -> None:
+    """Record timed synthetic scale checks and peak process memory."""
+    from uuid import uuid4
+
+    from safeslicesql.scale_check import run_scale_check
+
+    _init(log_level)
+    output = Path("results/scale") / uuid4().hex[:12]
+    result = run_scale_check(
+        output,
+        levels=rows,
+        seeds=seed,
+        cases=cases,
+        mysql=mysql,
+        progress=lambda row: typer.echo(
+            f"{'PASS' if row['success'] else 'FAIL'} case {row['case']} {row['method']} {row['budget_percent']}%"
+        ),
+    )
+    typer.echo(f"Synthetic scale evidence: {output.resolve()}")
+    if any(sample["failed"] for sample in result["measurements"]):
+        raise typer.Exit(1)
+
+
+@app.command()
+def jobs(
+    action: str = typer.Argument("list", help="list, recover, cancel, or cleanup"),
+    folder: Optional[str] = typer.Option(None, "--folder"),
+    days: int = typer.Option(7, min=1),
+) -> None:
+    """Inspect owned local jobs; explicitly clean expired owned MySQL schemas."""
+    from safeslicesql.runtime import OperationInterrupted
+
+    try:
+        _manage_jobs(action, folder, days)
+    except OperationInterrupted as exc:
+        typer.echo(f"[stopped] {safe_error(exc)}", err=True)
+        raise typer.Exit(124) from exc
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(safe_error(exc)) from exc
+
+
+def _manage_jobs(action: str, folder: str | None, days: int):
+    from safeslicesql.jobs import cleanup_expired, owned_jobs, read_job, recover_jobs
+
+    root = Path("results")
+    if action == "list":
+        for path, record in owned_jobs(root):
+            typer.echo(f"{record['state']} | {record['phase']} | {path.parent}")
+    elif action == "recover":
+        for path in recover_jobs(root):
+            typer.echo(
+                f"Interrupted: {path.parent}. Restart from its original input; no partial target is accepted."
+            )
+    elif action == "cancel" and folder:
+        path = Path(folder).resolve()
+        if not path.is_relative_to(root.resolve()):
+            raise typer.BadParameter("Job folder must be inside results.")
+        record = read_job(path / "job.json")
+        if record["state"] != "running":
+            raise typer.BadParameter("Only running jobs can be cancelled.")
+        (path / "cancel.requested").touch(exist_ok=True)
+        typer.echo(
+            "Cancellation requested. The current statement may take until its timeout to return."
+        )
+    elif action == "cleanup":
+        for name in cleanup_expired(root, load_config(validate=False), days):
+            typer.echo(f"Removed owned expired database: {name}")
+    else:
+        raise typer.BadParameter("Choose list, recover, cancel --folder PATH, or cleanup --days N.")
+
+
+@app.command()
+def store_password(role: str = typer.Argument(..., help="source or target")) -> None:
+    """Store a password in the current OS user's credential vault."""
+    if role not in ("source", "target"):
+        raise typer.BadParameter("Role must be source or target.")
+    import os
+
+    from safeslicesql.security import os_vault
+
+    load_logging_settings()
+    prefix = f"SAFESLICE_{role.upper()}_"
+    host = os.environ.get(prefix + "HOST", "localhost")
+    port = os.environ.get(prefix + "PORT", "3306")
+    user = os.environ.get(prefix + "USER", "")
+    if not user:
+        raise typer.BadParameter("Configure the connection username first.")
+    try:
+        vault = os_vault()
+    except Exception as exc:
+        raise typer.BadParameter(
+            "Install safeslicesql[security] and configure a supported OS credential vault."
+        ) from exc
+    service = f"SafeSliceSQL/{role}"
+    password = typer.prompt(
+        "Password to store in OS vault", hide_input=True, confirmation_prompt=True
+    )
+    try:
+        vault.set_password(service, f"{user}@{host}:{port}", password)
+    except Exception as exc:
+        raise typer.BadParameter("The OS credential vault could not store this password.") from exc
+    typer.echo(
+        f"Stored. Set SAFESLICE_{role.upper()}_PASSWORD_KEYRING_SERVICE={service}; remove the plaintext password from .env."
+    )
 
 
 @app.command()

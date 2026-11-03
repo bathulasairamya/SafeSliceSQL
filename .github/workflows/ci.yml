@@ -9,6 +9,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      SAFESLICE_SOURCE_USER: unit_reader
+      SAFESLICE_SOURCE_DATABASE: unit_source
+      SAFESLICE_TARGET_USER: unit_writer
+      SAFESLICE_TARGET_DATABASE: unit_target
     strategy:
       fail-fast: false
       matrix:
@@ -35,3 +40,44 @@ jobs:
     - name: Run pytest test suite
       run: |
         pytest -v -m "not db" --tb=short
+
+  mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci_disposable_only
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pci_disposable_only"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      SAFESLICE_TEST_MYSQL_URL: mysql+pymysql://root:ci_disposable_only@127.0.0.1:3306/mysql
+      SAFESLICE_SOURCE_USER: root
+      SAFESLICE_SOURCE_DATABASE: unused_source
+      SAFESLICE_TARGET_HOST: 127.0.0.1
+      SAFESLICE_TARGET_PORT: "3306"
+      SAFESLICE_TARGET_USER: root
+      SAFESLICE_TARGET_PASSWORD: ci_disposable_only
+      SAFESLICE_TARGET_DATABASE: mysql
+      SAFESLICE_LIMIT_JOB_SECONDS: "1800"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: pip
+    - run: python -m pip install -r requirements.txt
+    - name: Exercise real MySQL safety and input handling
+      run: python -m pytest tests/test_mysql_safety.py -q
+    - name: Record repeatable MySQL scale evidence
+      run: python -m safeslicesql.cli scalecheck --mysql --rows 1000 --rows 5000 --seed 42 --cases 5
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: mysql-scale-evidence
+        path: results/scale

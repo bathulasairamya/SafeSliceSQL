@@ -24,7 +24,9 @@ from sqlalchemy import Engine
 
 from safeslicesql.db import quote_ident
 from safeslicesql.result_store import ResultStore, encode_values, temporary_result_store
+from safeslicesql.runtime import cap
 from safeslicesql.schema_compatibility import table_schema_differences
+from safeslicesql.security import safe_error
 from safeslicesql.source_snapshot import SourceSnapshot, capture_source_snapshot
 from safeslicesql.types import (
     QueryResult,
@@ -92,6 +94,7 @@ def _stream_query(
             batch = []
             count = 0
             for row in result:
+                cap(count + 1, "max_result_rows")
                 batch.append((0, encode_values(row), int(source), int(not source)))
                 for kind, positions in ((1, key_positions), (2, group_positions)):
                     if positions:
@@ -136,7 +139,7 @@ def validate_subset(
         logger.error("Subset validation could not complete: %s", exc)
         return ValidationReport(
             budget_limit=budget_limit,
-            errors=[f"Subset validation could not complete: {exc}"],
+            errors=[f"Subset validation could not complete: {safe_error(exc)}"],
         )
 
 
@@ -201,7 +204,7 @@ def _validate_subset(
                         pk_unique = False
                 except Exception as exc:
                     pk_unique = False
-                    check_errors.append(f"PK check on '{table_name}' failed: {exc}")
+                    check_errors.append(f"PK check on '{table_name}' failed: {safe_error(exc)}")
 
         # 2. Check column schema compatibility
         if table_name in source_tables:
@@ -255,7 +258,7 @@ def _validate_subset(
                         )
                 except Exception as exc:
                     check_errors.append(
-                        f"FK check between '{child_table}' -> '{parent_table}' failed: {exc}"
+                        f"FK check between '{child_table}' -> '{parent_table}' failed: {safe_error(exc)}"
                     )
 
     source_unchanged = None
@@ -357,7 +360,7 @@ def evaluate_workload(
                     ) = 1.0
 
         except Exception as exc:
-            result.error = f"Execution/evaluation failed: {exc}"
+            result.error = f"Execution/evaluation failed: {safe_error(exc)}"
             result.survived = False
             result.key_retention = result.result_row_retention = result.aggregate_retention = 0.0
         results.append(result)

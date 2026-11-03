@@ -16,6 +16,7 @@ import sqlalchemy as sa
 from sqlalchemy import Engine
 
 from safeslicesql.db import quote_ident as _quote_ident
+from safeslicesql.runtime import cap
 from safeslicesql.types import (
     ColumnMetadata,
     ForeignKeyMetadata,
@@ -57,6 +58,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
 
     schema = SchemaMetadata(database_name=db_name)
     table_names = sorted(inspector.get_table_names())
+    cap(len(table_names), "max_tables")
     logger.debug(
         "Discovered %d tables in database '%s': %s", len(table_names), db_name, table_names
     )
@@ -71,6 +73,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
             except Exception as exc:
                 raise RuntimeError(f"Could not count rows in table '{table_name}'") from exc
 
+    cap(sum(table_row_counts.values()), "max_source_rows")
     for table_name in table_names:
         logger.debug("Introspecting table: %s", table_name)
 
@@ -78,6 +81,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
         columns: list[ColumnMetadata] = []
         try:
             columns_raw = inspector.get_columns(table_name)
+            cap(len(columns_raw), "max_columns")
             for col in columns_raw:
                 default_val = col.get("default")
                 col_meta = ColumnMetadata(

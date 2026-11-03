@@ -71,6 +71,10 @@ def save_run_results_csv(
         "budget_percent": run_result.budget_percent,
         "dataset_size": run_result.dataset_size,
         "success": run_result.success,
+        "acceptance_passed": run_result.acceptance.passed if run_result.acceptance else None,
+        "acceptance_errors": "; ".join(run_result.acceptance.errors)
+        if run_result.acceptance
+        else "",
         "total_selected": sel.total_selected if sel else 0,
         "closure_additions": sel.closure_additions if sel else 0,
         "rejected_candidates": sel.rejected_candidates if sel else 0,

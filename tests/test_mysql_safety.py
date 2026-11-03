@@ -52,6 +52,150 @@ def execute(engine, *statements):
             connection.exec_driver_sql(statement)
 
 
+def test_mysql_readonly_source_and_statement_deadline(mysql_pair):
+    import time
+
+    from safeslicesql.runtime import Limits, bounded_engine, execution_context
+
+    source, _ = mysql_pair
+    execute(source, "CREATE TABLE t(id INT PRIMARY KEY) ENGINE=InnoDB")
+    execute(source, "INSERT INTO t VALUES(1)")
+    with execution_context(Limits(statement_seconds=1, job_seconds=10)):
+        reader = bounded_engine(source.url, read_only=True)
+        try:
+            with pytest.raises(sa.exc.DBAPIError), reader.begin() as connection:
+                connection.exec_driver_sql("INSERT INTO t VALUES(2)")
+            started = time.monotonic()
+            with pytest.raises(sa.exc.DBAPIError), reader.connect() as connection:
+                connection.exec_driver_sql("SELECT id FROM t WHERE SLEEP(3)").all()
+            assert time.monotonic() - started < 3
+        finally:
+            reader.dispose()
+
+
+def test_mysql_cancel_before_commit_restores_previous_copy(mysql_pair):
+    import threading
+
+    from safeslicesql.runtime import (
+        OperationCancelled,
+        bounded_engine,
+        execution_context,
+    )
+
+    source, target = mysql_pair
+    execute(source, "CREATE TABLE t(id INT PRIMARY KEY) ENGINE=InnoDB", "INSERT INTO t VALUES(1)")
+    execute(target, "CREATE TABLE t(id INT PRIMARY KEY) ENGINE=InnoDB", "INSERT INTO t VALUES(99)")
+    cancellation = threading.Event()
+    with execution_context(cancellation=cancellation):
+        guarded = bounded_engine(target.url)
+        try:
+
+            @sa.event.listens_for(guarded, "after_cursor_execute")
+            def cancel_on_insert(conn, cursor, statement, parameters, context, many):
+                if statement.startswith("INSERT"):
+                    cancellation.set()
+
+            schema = inspect_schema(source)
+            with pytest.raises(OperationCancelled):
+                materialize_subset(
+                    source,
+                    guarded,
+                    schema,
+                    SelectionResult("test", 42, 1, {"t": [1]}),
+                    build_dependency_graph(schema),
+                    target.url.database,
+                )
+            cancellation.clear()
+            with target.connect() as connection:
+                assert connection.exec_driver_sql("SELECT * FROM t").all() == [(99,)]
+        finally:
+            guarded.dispose()
+
+
+def test_mysql_target_lease_rejects_overlapping_copy(mysql_pair):
+    from safeslicesql.target_lock import target_lease
+
+    _, target = mysql_pair
+    with target_lease(target):
+        with pytest.raises(ValueError, match="busy"):
+            with target_lease(target, timeout=0):
+                pytest.fail("A second connection must not acquire this target.")
+    with target_lease(target, timeout=0):
+        pass
+
+
+def test_mysql_guarded_copy_journal_and_owned_retention(mysql_pair, tmp_path):
+    import time
+
+    from safeslicesql.config import AppConfig, DatabaseConfig
+    from safeslicesql.desktop_service import CopyRequest, create_copy
+    from safeslicesql.jobs import atomic_json, cleanup_expired, read_job
+
+    source, target = mysql_pair
+    url = source.url
+    config = DatabaseConfig(url.host, url.port, url.username, url.password or "", url.database)
+    cfg = AppConfig(config, config)
+    path = tmp_path / "input.csv"
+    path.write_text("Code,Name\n001,First\n002,Second\n", encoding="utf-8")
+    outcome = create_copy(cfg, CopyRequest("csv", str(path), budget=100), tmp_path / "job")
+    record = read_job(outcome.folder / "job.json")
+    try:
+        assert record["state"] == "completed"
+        assert len(record["schemas"]) == 2
+        assert all(schema["state"] == "created" for schema in record["schemas"])
+        assert outcome.results.successful_runs == 1
+        record["updated_at"] = time.time() - 9 * 86400
+        atomic_json(outcome.folder / "job.json", record)
+        removed = cleanup_expired(tmp_path, cfg, days=7)
+        assert set(removed) == {outcome.prepared.source.database, outcome.prepared.target.database}
+        with target.connect() as connection:
+            names = set(connection.exec_driver_sql("SHOW DATABASES").scalars())
+        assert source.url.database in names and target.url.database in names
+    finally:
+        with target.begin() as connection:
+            for name in (outcome.prepared.target.database, outcome.prepared.source.database):
+                connection.exec_driver_sql(f"DROP DATABASE IF EXISTS {quote_ident(name)}")
+
+
+def test_mysql_prefix_writer_has_no_access_to_existing_source(mysql_pair, tmp_path):
+    from safeslicesql.config import AppConfig, DatabaseConfig
+    from safeslicesql.dataset_input import prepare_dataset
+
+    source, target = mysql_pair
+    url = source.url
+    user = "ss_writer_" + uuid.uuid4().hex[:12]
+    password = uuid.uuid4().hex
+    execute(source, "CREATE TABLE original(id INT PRIMARY KEY) ENGINE=InnoDB")
+    with target.begin() as connection:
+        if connection.exec_driver_sql("SELECT @@partial_revokes").scalar_one():
+            pytest.skip("Prefix-grant profile requires partial_revokes=OFF")
+        connection.execute(
+            sa.text(f"CREATE USER '{user}'@'%' IDENTIFIED BY :password"),
+            {"password": password},
+        )
+        for prefix in (r"safeslice\_input\_%", r"safeslice\_output\_%"):
+            connection.execution_options(no_parameters=True).exec_driver_sql(
+                f"GRANT SELECT,INSERT,DELETE,CREATE,DROP,REFERENCES,INDEX ON `{prefix}`.* TO '{user}'@'%'"
+            )
+    writer = sa.create_engine(url.set(username=user, password=password, database=None))
+    prepared = None
+    try:
+        with pytest.raises(sa.exc.DBAPIError), writer.connect() as connection:
+            connection.exec_driver_sql(f"SELECT * FROM {quote_ident(url.database)}.original").all()
+        config = DatabaseConfig(url.host, url.port, user, password, "")
+        file = tmp_path / "input.csv"
+        file.write_text("A\n1\n", encoding="utf-8")
+        prepared = prepare_dataset(AppConfig(config, config), tmp_path / "prepared", files=file)
+        assert prepared.tables
+    finally:
+        writer.dispose()
+        with target.begin() as connection:
+            if prepared:
+                for name in (prepared.source.database, prepared.target.database):
+                    connection.exec_driver_sql(f"DROP DATABASE IF EXISTS {quote_ident(name)}")
+            connection.execute(sa.text(f"DROP USER '{user}'@'%'")).close()
+
+
 @pytest.mark.parametrize("kind", ["existing", "csv", "xlsx"])
 def test_faculty_input_preparation_and_full_pipeline(mysql_pair, tmp_path, kind):
     import yaml

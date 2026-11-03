@@ -16,8 +16,11 @@ import sqlalchemy as sa
 from safeslicesql.config import load_config
 from safeslicesql.db import quote_ident
 from safeslicesql.dependency_graph import build_dependency_graph
+from safeslicesql.jobs import intend_schema, register_schema, removed_schema
+from safeslicesql.runtime import bounded_engine, cap, checkpoint, suspend_limits
 from safeslicesql.sampler import METHODS, select_rows
 from safeslicesql.schema_analyzer import inspect_schema
+from safeslicesql.security import safe_error
 from safeslicesql.source_snapshot import capture_source_snapshot
 from safeslicesql.subset_generator import materialize_subset
 from safeslicesql.validator import evaluate_workload, validate_subset
@@ -35,18 +38,20 @@ def synthetic_pair(directory: Path, *, mysql: bool = False):
     try:
         if mysql:
             config = load_config(validate=False)
-            admin = sa.create_engine(config.target_db.url.set(database="mysql"))
+            admin = bounded_engine(config.target_db.url.set(database=None))
             # No IF NOT EXISTS: a collision must never adopt an existing database.
             for role in ("source", "target"):
                 name = f"safeslice_check_{uuid4().hex}_{role}"
+                intend_schema(name)
                 with admin.begin() as connection:
                     connection.exec_driver_sql(f"CREATE DATABASE {quote_ident(name)}")
                 created.append(name)
-                engines.append(sa.create_engine(admin.url.set(database=name)))
+                register_schema(admin, name, "synthetic_" + role)
+                engines.append(bounded_engine(admin.url.set(database=name)))
         else:
             directory.mkdir(parents=True, exist_ok=True)
             for role in ("source", "target"):
-                engine = sa.create_engine(
+                engine = bounded_engine(
                     sa.URL.create("sqlite", database=str((directory / f"{role}.db").resolve()))
                 )
 
@@ -64,10 +69,13 @@ def synthetic_pair(directory: Path, *, mysql: bool = False):
             try:
                 for name in reversed(created):
                     try:
-                        with admin.begin() as connection:
+                        with suspend_limits(), admin.begin() as connection:
                             connection.exec_driver_sql(f"DROP DATABASE {quote_ident(name)}")
+                        removed_schema(name)
                     except Exception as exc:
-                        cleanup_errors.append(f"Could not remove owned test schema {name}: {exc}")
+                        cleanup_errors.append(
+                            f"Could not remove owned test schema {name}: {safe_error(exc)}"
+                        )
             finally:
                 admin.dispose()
             if cleanup_errors:
@@ -118,11 +126,13 @@ def generate_database(engine: sa.Engine, *, seed: int, rows: int, shape: str) ->
         counts[name] = max(1, rows // 4) if index == 0 else rng.randint(max(1, rows // 2), rows)
         if shape == "independent" and index == 2:
             counts[name] = 0  # Empty-table and source-empty-query handling.
+    cap(sum(counts.values()), "max_source_rows")
     metadata.create_all(engine)
     with engine.begin() as connection:
         for table in tables:
             batch = []
             for key in range(1, counts[table.name] + 1):
+                checkpoint()
                 row = {
                     "id": key,
                     "category": rng.choice(["A", "A", "B", "C", "O'Reilly"]),
@@ -274,7 +284,7 @@ def run_synthetic_suite(
                                 and not record["error"]
                             )
                         except Exception as exc:
-                            record["error"] = str(exc)
+                            record["error"] = safe_error(exc)
                         record["seconds"] = round(time.perf_counter() - started, 4)
                         records.append(record)
                         if progress:
@@ -285,7 +295,7 @@ def run_synthetic_suite(
                     "case": index + 1,
                     "shape": shape,
                     "success": False,
-                    "error": f"Case setup/cleanup failed: {exc}",
+                    "error": f"Case setup/cleanup failed: {safe_error(exc)}",
                 }
             )
         # Persist after every case so interrupted suites retain completed evidence.

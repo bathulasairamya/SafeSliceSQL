@@ -7,15 +7,20 @@ from typing import Callable
 
 from sqlalchemy import Engine
 
+from safeslicesql.acceptance import AcceptancePolicy
 from safeslicesql.dependency_graph import DependencyGraph
+from safeslicesql.runtime import checkpoint, current
 from safeslicesql.sampler import select_rows
+from safeslicesql.security import safe_error
 from safeslicesql.source_snapshot import SourceSnapshot
 from safeslicesql.subset_generator import materialize_subset
+from safeslicesql.target_lock import serialized_target
 from safeslicesql.types import BenchmarkRunResult, SchemaMetadata
 from safeslicesql.validator import evaluate_workload, validate_subset
 from safeslicesql.workload_analyzer import WorkloadAnalysis
 
 
+@serialized_target
 def run_pipeline(
     *,
     source_engine: Engine,
@@ -30,6 +35,7 @@ def run_pipeline(
     budget_percent: float,
     target_database: str,
     initial_source_snapshot: SourceSnapshot,
+    acceptance: AcceptancePolicy | None = None,
     on_stage: Callable[[str, object], None] | None = None,
 ) -> BenchmarkRunResult:
     """Return complete failure evidence; never evaluate a failed materialization."""
@@ -37,6 +43,9 @@ def run_pipeline(
     errors = []
 
     def stage(name, action):
+        checkpoint()
+        if (guard := current()) and guard.job:
+            guard.job.phase(name)
         started = time.perf_counter()
         try:
             value = action()
@@ -49,6 +58,7 @@ def run_pipeline(
                 "validation": "runtime_validation",
             }[name]
             setattr(result, timing, time.perf_counter() - started)
+        checkpoint()
         if on_stage:
             on_stage(name, value)
         return value
@@ -88,7 +98,7 @@ def run_pipeline(
             if evaluated.failed_queries and not errors:
                 errors.append("Workload execution failed.")
         except Exception as exc:
-            errors.append(f"Workload evaluation failed: {exc}")
+            errors.append(f"Workload evaluation failed: {safe_error(exc)}")
         validation = stage(
             "validation",
             lambda: validate_subset(
@@ -100,10 +110,13 @@ def run_pipeline(
             ),
         )
         errors.extend(validation.errors)
+        if result.workload is not None:
+            result.acceptance = (acceptance or AcceptancePolicy()).evaluate(result.workload)
+            errors.extend(result.acceptance.errors)
         if not validation.is_valid and not validation.errors:
             errors.append("Validation checks failed.")
         result.success = validation.is_valid and not errors
     except Exception as exc:
-        errors.append(str(exc))
+        errors.append(safe_error(exc))
     result.error_message = "; ".join(error for error in errors if error)
     return result

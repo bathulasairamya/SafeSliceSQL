@@ -9,7 +9,10 @@ every component in the pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from safeslicesql.acceptance import AcceptanceReport
 
 
 class DatabaseResolutionError(RuntimeError):
@@ -265,6 +268,7 @@ class BenchmarkRunResult:
     runtime_workload_eval: float = 0.0
     success: bool = False
     error_message: str = ""
+    acceptance: AcceptanceReport | None = None
 
 
 @dataclass

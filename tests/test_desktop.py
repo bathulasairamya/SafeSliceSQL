@@ -9,6 +9,7 @@ import pytest
 import sqlalchemy as sa
 
 import safeslicesql.desktop_service as service
+from safeslicesql.acceptance import AcceptanceReport
 from safeslicesql.automatic_workload import save_automatic_workload
 from safeslicesql.desktop_service import CopyRequest
 from safeslicesql.schema_analyzer import inspect_schema
@@ -82,6 +83,7 @@ def screen():
         "details",
         "report_button",
         "chart_button",
+        "verify_button",
         "results",
         "progress",
         "root",
@@ -104,6 +106,7 @@ def outcome(tmp_path, success=True):
         validation=ValidationReport(actual_rows=10, budget_limit=10, source_unchanged=True),
         workload=WorkloadReport(survival_denominator=2),
         success=success,
+        acceptance=AcceptanceReport(success),
         error_message="" if success else "injected failure",
     )
     return SimpleNamespace(
@@ -126,7 +129,7 @@ def test_completed_copy_shows_plain_language_and_input_name(tmp_path):
     assert "Copy ready for faculty.csv" in ui.summary.set.call_args.args[0]
     assert ui.report_button.configure.call_args.kwargs["state"] == "normal"
     assert "target" in ui.details.set.call_args.args[0]
-    assert ui.results.insert.call_count == 5
+    assert ui.results.insert.call_count == 6
 
 
 def test_failed_run_never_claims_copy_ready(tmp_path):

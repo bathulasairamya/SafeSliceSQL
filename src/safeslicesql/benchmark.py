@@ -16,17 +16,18 @@ import time
 from pathlib import Path
 from typing import Any
 
-import sqlalchemy as sa
 import yaml
 from rich.console import Console
 from rich.table import Table
 from sqlalchemy import Engine
 
+from safeslicesql.acceptance import AcceptancePolicy
 from safeslicesql.config import load_config
 from safeslicesql.db import get_source_engine, get_target_engine, test_connection
 from safeslicesql.dependency_graph import build_dependency_graph
 from safeslicesql.pipeline import run_pipeline
 from safeslicesql.reporting import save_run_results_csv
+from safeslicesql.runtime import bounded_engine
 from safeslicesql.sampler import METHODS
 from safeslicesql.schema_analyzer import inspect_schema
 from safeslicesql.source_snapshot import capture_source_snapshot
@@ -52,9 +53,14 @@ def load_benchmark_config(config_path: str | Path) -> dict[str, Any]:
         data = {}
     if not isinstance(data, dict):
         raise ValueError("Benchmark configuration must be a mapping.")
-    for section in ("matrix", "workload", "output", "database"):
+    for section in ("matrix", "workload", "output", "database", "acceptance"):
         if section in data and not isinstance(data[section], dict):
             raise ValueError(f"Benchmark section '{section}' must be a mapping.")
+
+    try:
+        acceptance = AcceptancePolicy(**data.get("acceptance", {}))
+    except TypeError as exc:
+        raise ValueError("Unknown acceptance policy fields.") from exc
 
     # Extract sections with defaults
     matrix = data.get("matrix", {})
@@ -107,6 +113,7 @@ def load_benchmark_config(config_path: str | Path) -> dict[str, Any]:
     target_database_name = db_cfg.get("target_database_name")
 
     return {
+        "acceptance": acceptance,
         "methods": methods,
         "budget_percents": budget_percents,
         "seeds": seeds,
@@ -165,9 +172,9 @@ def run_benchmark(
         created_engines = True
         if source_url and target_url:
             if source_engine is None:
-                source_engine = sa.create_engine(source_url)
+                source_engine = bounded_engine(source_url, read_only=True)
             if target_engine is None:
-                target_engine = sa.create_engine(target_url)
+                target_engine = bounded_engine(target_url)
             if target_database_name is None:
                 target_database_name = target_engine.url.database or "employees_target"
         else:
@@ -249,6 +256,7 @@ def run_benchmark(
                         budget_percent=float(b_pct),
                         target_database=target_database_name,
                         initial_source_snapshot=initial_source_snapshot,
+                        acceptance=cfg["acceptance"],
                     )
                     if run_res.success:
                         elapsed = (

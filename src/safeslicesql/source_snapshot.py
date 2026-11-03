@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import sqlalchemy as sa
 
 from safeslicesql.db import quote_ident
+from safeslicesql.runtime import cap
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ def capture_source_snapshot(engine: sa.Engine) -> SourceSnapshot:
             )
             try:
                 for row in result:
+                    cap(total_rows + count + 1, "max_source_rows")
                     encoded = json.dumps(
                         [(type(value).__name__, str(value)) for value in row],
                         ensure_ascii=True,

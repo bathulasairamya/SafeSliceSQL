@@ -1,2 +1,2 @@
 # Dependency versions are maintained in pyproject.toml.
--e .[dev,excel]
+-e .[dev,excel,security]

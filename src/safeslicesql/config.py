@@ -16,6 +16,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy.engine import URL
 
+from safeslicesql.security import credential
+
 logger = logging.getLogger("safeslicesql.config")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -186,6 +188,10 @@ def load_config(
         password=_get_env("SAFESLICE_TARGET_PASSWORD", ""),
         database=_get_env("SAFESLICE_TARGET_DATABASE"),
     )
+
+    source_db.password = credential("source", source_db.host, source_db.port, source_db.user)
+    if require_target:
+        target_db.password = credential("target", target_db.host, target_db.port, target_db.user)
 
     config = AppConfig(
         source_db=source_db,

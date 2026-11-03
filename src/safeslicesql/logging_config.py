@@ -19,10 +19,28 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from safeslicesql.security import redact, safe_error
+
 LOG_FORMAT = "%(asctime)s | %(name)-30s | %(levelname)-8s | %(message)s"
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 _configured = False
+
+
+class RedactionFilter(logging.Filter):
+    def filter(self, record):
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                safe_error(value) if isinstance(value, BaseException) else value
+                for value in record.args
+            )
+        message = record.getMessage()
+        if record.exc_info:
+            message += " | " + safe_error(record.exc_info[1])
+            record.exc_info = None
+            record.exc_text = None
+        record.msg, record.args = redact(message), ()
+        return True
 
 
 class ConsoleHandler(logging.StreamHandler):
@@ -87,6 +105,7 @@ def setup_logging(
     console_handler = ConsoleHandler()
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(RedactionFilter())
     root_logger.addHandler(console_handler)
 
     # File handler (rotating)
@@ -100,6 +119,7 @@ def setup_logging(
     )
     file_handler.setLevel(logging.DEBUG)  # Always capture DEBUG to file
     file_handler.setFormatter(formatter)
+    file_handler.addFilter(RedactionFilter())
     root_logger.addHandler(file_handler)
 
     root_logger.info(

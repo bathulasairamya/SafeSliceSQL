@@ -21,7 +21,9 @@ from sqlalchemy import Engine
 
 from safeslicesql.db import assert_distinct_databases, quote_ident
 from safeslicesql.dependency_graph import DependencyGraph
+from safeslicesql.runtime import checkpoint
 from safeslicesql.schema_compatibility import table_schema_differences
+from safeslicesql.security import safe_error
 from safeslicesql.types import (
     GenerationResult,
     SchemaMetadata,
@@ -124,8 +126,8 @@ def materialize_subset(
             created_tables=created_tables,
         )
     except Exception as exc:
-        err_msg = f"Failed to reproduce schema on target database: {exc}"
-        logger.error(err_msg, exc_info=True)
+        err_msg = f"Failed to reproduce schema on target database: {safe_error(exc)}"
+        logger.error(err_msg)
         _cleanup_created_tables(target_engine, created_tables)
         return GenerationResult(
             target_database=target_database,
@@ -154,6 +156,7 @@ def materialize_subset(
                     t_conn.execute(sa.delete(target_meta.tables[tbl_name]))
 
             for tbl_name in insertion_order:
+                checkpoint()
                 table_meta = schema.tables[tbl_name]
                 target_table = target_meta.tables[tbl_name]
                 keys = selected_rows.get(tbl_name, [])
@@ -162,6 +165,7 @@ def materialize_subset(
                     # Only self-referencing tables need a row-level dependency graph.
                     keys = _self_reference_order(s_conn, table_meta, keys, chunk_size)
                 for start in range(0, len(keys), chunk_size):
+                    checkpoint()
                     batch = keys[start : start + chunk_size]
                     condition, params = _key_condition(table_meta.effective_primary_keys, batch)
                     fetched = (
@@ -193,6 +197,7 @@ def materialize_subset(
                 t_conn.execute(sa.text(f"SELECT COUNT(*) FROM {quote_ident(name)}")).scalar_one()
                 for name in sa.inspect(t_conn).get_table_names()
             )
+            checkpoint()
             if actual_rows > selection.budget:
                 raise ValueError(
                     f"Target row count ({actual_rows}) exceeds hard budget limit ({selection.budget})."
@@ -216,8 +221,8 @@ def materialize_subset(
         )
 
     except Exception as exc:
-        err_msg = f"Materialization transaction failed: {exc}"
-        logger.error(err_msg, exc_info=True)
+        err_msg = f"Materialization transaction failed: {safe_error(exc)}"
+        logger.error(err_msg)
         _cleanup_created_tables(target_engine, created_tables)
         return GenerationResult(
             target_database=target_database,

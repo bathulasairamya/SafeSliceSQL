@@ -13,11 +13,13 @@ def write_experiment_config(
     seeds: list[int],
     workload: str,
     output: Path,
+    acceptance: dict | None = None,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(
             {
+                **({"acceptance": acceptance} if acceptance is not None else {}),
                 "matrix": {"methods": methods, "budget_percents": budgets, "seeds": seeds},
                 "workload": {
                     "path": "auto" if workload == "auto" else str(Path(workload).resolve())
