@@ -117,7 +117,7 @@ def build_report(summary, evidence=None):
                     ("Table structure matches", validation.get("schema_compatible")),
                     ("Missing required references", validation.get("fk_violations")),
                     ("Within size limit", validation.get("budget_compliant")),
-                    ("Original unchanged (fingerprint)", validation.get("source_unchanged")),
+                    ("Source read view matches baseline", validation.get("source_unchanged")),
                 ],
             ),
         ]

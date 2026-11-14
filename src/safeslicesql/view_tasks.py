@@ -3,7 +3,7 @@
 import queue
 import threading
 
-from safeslicesql.runtime import execution_context
+from safeslicesql.runtime import OperationInterrupted, execution_context
 from safeslicesql.security import safe_error
 
 
@@ -16,7 +16,7 @@ def background(widget, task, done, failed):
             with execution_context(cancellation=cancelled):
                 value = task()
             events.put((True, value))
-        except Exception as exc:
+        except (Exception, OperationInterrupted) as exc:
             events.put((False, safe_error(exc)))
 
     def poll():

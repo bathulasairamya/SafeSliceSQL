@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import datetime
 import logging
-from typing import Any
+from typing import Any, Callable
 
 import networkx as nx
 import sqlalchemy as sa
@@ -21,7 +21,7 @@ from sqlalchemy import Engine
 
 from safeslicesql.db import assert_distinct_databases, quote_ident
 from safeslicesql.dependency_graph import DependencyGraph
-from safeslicesql.runtime import checkpoint
+from safeslicesql.runtime import checkpoint, suspend_limits
 from safeslicesql.schema_compatibility import table_schema_differences
 from safeslicesql.security import safe_error
 from safeslicesql.types import (
@@ -42,6 +42,7 @@ def materialize_subset(
     graph: DependencyGraph,
     target_database: str,
     chunk_size: int = 500,
+    before_commit: Callable[[Any, Any], None] | None = None,
 ) -> GenerationResult:
     """
     Create and populate the target database with selected rows.
@@ -125,10 +126,12 @@ def materialize_subset(
             insertion_order=insertion_order,
             created_tables=created_tables,
         )
-    except Exception as exc:
+    except BaseException as exc:
         err_msg = f"Failed to reproduce schema on target database: {safe_error(exc)}"
         logger.error(err_msg)
         _cleanup_created_tables(target_engine, created_tables)
+        if not isinstance(exc, Exception):
+            raise
         return GenerationResult(
             target_database=target_database,
             success=False,
@@ -145,13 +148,19 @@ def materialize_subset(
                 table_meta = schema.tables[tbl_name]
                 if _has_self_reference(table_meta):
                     # A bulk DELETE can visit parents before children on MySQL.
-                    keys = _self_reference_order(t_conn, table_meta, None, chunk_size)
-                    for key in reversed(keys):
-                        condition, params = _key_condition(table_meta.effective_primary_keys, [key])
-                        t_conn.execute(
-                            sa.text(f"DELETE FROM {quote_ident(tbl_name)} WHERE {condition}"),
-                            params,
-                        )
+                    levels = _self_reference_order(
+                        t_conn, table_meta, None, chunk_size, grouped=True
+                    )
+                    for level in reversed(levels):
+                        for start in range(0, len(level), chunk_size):
+                            checkpoint()
+                            condition, params = _key_condition(
+                                table_meta.effective_primary_keys, level[start : start + chunk_size]
+                            )
+                            t_conn.execute(
+                                sa.text(f"DELETE FROM {quote_ident(tbl_name)} WHERE {condition}"),
+                                params,
+                            )
                 else:
                     t_conn.execute(sa.delete(target_meta.tables[tbl_name]))
 
@@ -170,7 +179,7 @@ def materialize_subset(
                     condition, params = _key_condition(table_meta.effective_primary_keys, batch)
                     fetched = (
                         s_conn.execute(
-                            sa.text(f"SELECT * FROM {quote_ident(tbl_name)} WHERE {condition}"),
+                            sa.select(target_table).where(sa.text(condition)),
                             params,
                         )
                         .mappings()
@@ -187,6 +196,15 @@ def materialize_subset(
                     # SELECT IN does not guarantee order, even when the input keys are sorted.
                     payload = [_insert_values(target_table, by_key[key]) for key in batch]
                     t_conn.execute(sa.insert(target_table), payload)
+                    copied = {
+                        _row_key(row, table_meta.effective_primary_keys): dict(row)
+                        for row in t_conn.execute(
+                            sa.select(target_table).where(sa.text(condition)),
+                            params,
+                        ).mappings()
+                    }
+                    if copied != by_key:
+                        raise ValueError(f"Copied values differ from the source in '{tbl_name}'.")
                     inserted_for_table += len(payload)
                 rows_inserted[tbl_name] = inserted_for_table
 
@@ -202,6 +220,9 @@ def materialize_subset(
                 raise ValueError(
                     f"Target row count ({actual_rows}) exceeds hard budget limit ({selection.budget})."
                 )
+            if before_commit is not None:
+                before_commit(s_conn, t_conn)
+            checkpoint()
 
         total_inserted = sum(rows_inserted.values())
         logger.info(
@@ -220,10 +241,12 @@ def materialize_subset(
             error_message="",
         )
 
-    except Exception as exc:
+    except BaseException as exc:
         err_msg = f"Materialization transaction failed: {safe_error(exc)}"
         logger.error(err_msg)
         _cleanup_created_tables(target_engine, created_tables)
+        if not isinstance(exc, Exception):
+            raise
         return GenerationResult(
             target_database=target_database,
             tables_created=list(target_meta.tables.keys()) if "target_meta" in locals() else [],
@@ -308,7 +331,12 @@ def _has_self_reference(table: TableMetadata) -> bool:
 
 
 def _self_reference_order(
-    connection: sa.Connection, table: TableMetadata, keys: list[Any] | None, chunk_size: int
+    connection: sa.Connection,
+    table: TableMetadata,
+    keys: list[Any] | None,
+    chunk_size: int,
+    *,
+    grouped: bool = False,
 ) -> list[Any]:
     """Order actual parent PKs before child PKs, using SQL's FK equality semantics."""
     pk_columns = table.effective_primary_keys
@@ -341,6 +369,8 @@ def _self_reference_order(
                     raise ValueError(f"Missing selected self-reference parent in '{table.name}'.")
                 dependencies.add_edge(parent, child)
     try:
+        if grouped:
+            return [list(level) for level in nx.topological_generations(dependencies)]
         return list(nx.topological_sort(dependencies))
     except nx.NetworkXUnfeasible as exc:
         raise ValueError(
@@ -365,7 +395,7 @@ def _cleanup_created_tables(target_engine: Engine, created_tables: list[str]) ->
     """Remove only tables created by this attempt; never drop pre-existing tables."""
     for table_name in reversed(created_tables):
         try:
-            with target_engine.begin() as conn:
+            with suspend_limits(), target_engine.begin() as conn:
                 sa.Table(table_name, sa.MetaData()).drop(conn, checkfirst=True)
         except Exception:
             logger.exception("Could not remove newly created table '%s'", table_name)
@@ -391,6 +421,21 @@ def _reproduce_schema_on_target(
     source_inspector = sa.inspect(source_engine)
     target_inspector = sa.inspect(target_engine)
     existing = set(target_inspector.get_table_names())
+    if existing - set(insertion_order):
+        raise ValueError("Target contains unrelated tables; use a dedicated target database.")
+    with target_engine.connect() as connection:
+        if target_engine.dialect.name == "mysql":
+            triggers = connection.exec_driver_sql(
+                "SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() LIMIT 1"
+            ).first()
+        else:
+            triggers = connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='trigger' LIMIT 1"
+            ).first()
+        if triggers:
+            raise ValueError(
+                "Target triggers are unsupported: they can modify copied values or the row budget."
+            )
     for table_name in insertion_order:
         actual_pk = source_inspector.get_pk_constraint(table_name).get("constrained_columns", [])
         if not actual_pk or actual_pk != schema.tables[table_name].effective_primary_keys:
@@ -426,7 +471,7 @@ def _reproduce_schema_on_target(
                 raise ValueError(
                     "Could not reproduce exact source schema: " + "; ".join(differences)
                 )
-    except Exception:
+    except BaseException:
         _cleanup_created_tables(target_engine, created)
         created.clear()
         raise

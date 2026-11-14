@@ -2,16 +2,14 @@
 
 ## Implemented heuristic
 
-Workload-aware selection uses static table weights derived from supported SQL
-features. It ranks each candidate once by:
-
-```
-score(candidate) = table_weight / max(1, standalone_closure_size)
-```
-
-The standalone closure includes the candidate and all its required parents.
-Scores are not recomputed as selection grows. This heuristic does not estimate
-which individual rows satisfy predicates or the marginal query-result gain.
+Workload-aware selection first obtains bounded primary-key witnesses using the
+actual FROM/JOIN/WHERE conditions of each supported query. It visits witnesses
+round-robin across queries, adding their required dependencies only when they fit.
+Remaining sampled candidates are ranked by static table weights. Incremental
+closure traversal skips previously selected dependencies and stops once the
+remaining budget is exceeded. No standalone closure is computed for scoring.
+HAVING thresholds and optimal marginal query-result gain are not solved; the
+actual workload is evaluated before committing the target.
 
 ## Table weights
 
@@ -29,11 +27,11 @@ are errors rather than a silent fallback to uniform weights.
 
 ## Selection procedure
 
-1. Sample candidates from each table using a seeded reservoir over primary-key
-   order. The proportional pool targets 1.25 times the budget, capped by source
+1. Seed actual workload witnesses as described above, then sample candidates
+   from each table. The proportional pool targets 1.25 times the budget, capped by source
    size; per-table rounding and a one-candidate minimum can increase this total.
-2. Prefetch candidate foreign-key values and compute each candidate's closure.
-3. Calculate the static score, shuffle with the recorded seed, then stably sort
+2. Prefetch candidate foreign-key values; cache referenced unique-key lookups.
+3. Use the table weight as a static score, shuffle with the recorded seed, then stably sort
    scores descending. The seeded shuffle resolves equal-score ties.
 4. Visit candidates in that order. Skip rows already selected. Compute the
    incremental number of closure rows not yet in the selection.
@@ -61,11 +59,14 @@ Composite foreign-key constraints remain unsupported.
 ## Resource use
 
 Candidate memory scales with the sampled pool and dependency closures, rather
-than all source primary keys. Sampling still scans each table's keys; ordering
-can require database work when an index cannot satisfy the ordering. Scoring
+than all source primary keys. Dense integer keys use uniform rejection sampling
+with bounded indexed lookups. Sparse, textual and composite keys retain an exact
+streaming reservoir scan. Ordering can require database work when an index
+cannot satisfy the ordering. Scoring
 sorts C candidates in O(C log C), in addition to traversal and database costs.
 
-Workload analysis streams result rows to count them. Evaluation streams both
+Standalone workload analysis can stream result rows to count them; pipeline
+setup skips that redundant execution. Evaluation streams both
 results into a temporary indexed SQLite store for exact multiset and distinct-key
 comparisons. Python memory is bounded by a batch and individual row size;
 temporary disk use scales with distinct result, key, and group tuples. The store

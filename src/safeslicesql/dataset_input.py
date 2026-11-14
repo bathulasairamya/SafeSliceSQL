@@ -234,6 +234,9 @@ def prepare_dataset(
                     "input_kind": "files" if files is not None else "existing_mysql",
                     "tables": {name: table.row_count for name, table in schema.tables.items()},
                     "file_mappings": mappings,
+                    "import_semantics": "Text-preserving import with synthetic IDs; no inferred types or relationships."
+                    if files is not None
+                    else "Declared database types and relationships.",
                     "workload": str(workload.resolve()),
                     "query_purpose": "Structural demonstration; no business workload inferred.",
                 },

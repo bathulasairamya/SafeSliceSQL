@@ -14,6 +14,7 @@ Supports the v1 nullable foreign-key policy: NULL = no dependency.
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from typing import Any, Callable
 
 import networkx as nx
@@ -32,12 +33,20 @@ from safeslicesql.types import (
 logger = logging.getLogger("safeslicesql.dependency_graph")
 
 # In-memory FK resolution cache keyed by (engine_id, table_name, tuple(sorted(fk_columns)))
-_ENGINE_FK_CACHE: dict[tuple[int, str, tuple[str, ...]], dict[Any, dict[str, Any]]] = {}
+_CACHES: ContextVar[dict | None] = ContextVar("selection_caches", default=None)
+
+
+def _cache():
+    value = _CACHES.get()
+    if value is None:
+        value = {"fk": {}, "parent": {}}
+        _CACHES.set(value)
+    return value
 
 
 def clear_fk_cache() -> None:
     """Clear the cached foreign key resolution cache."""
-    _ENGINE_FK_CACHE.clear()
+    _CACHES.set({"fk": {}, "parent": {}})
 
 
 class DependencyGraph:
@@ -96,7 +105,8 @@ class DependencyGraph:
         clean_graph.remove_edges_from(nx.selfloop_edges(clean_graph))
         if nx.is_directed_acyclic_graph(clean_graph):
             return []
-        return list(nx.simple_cycles(clean_graph))
+        # One witness is enough to reject a graph; enumerating all cycles is exponential.
+        return [list(dict.fromkeys(u for u, _ in nx.find_cycle(clean_graph)))]
 
     def get_parents(self, table_name: str) -> list[str]:
         """
@@ -133,7 +143,7 @@ class DependencyGraph:
         clean_graph = self._graph.copy()
         clean_graph.remove_edges_from(nx.selfloop_edges(clean_graph))
         if not nx.is_directed_acyclic_graph(clean_graph):
-            cycles_str = ", ".join(" -> ".join(c) for c in nx.simple_cycles(clean_graph))
+            cycles_str = ", ".join(" -> ".join(c) for c in self.cycles())
             raise ValueError(
                 f"Cannot compute topological order: foreign-key graph contains cycles: {cycles_str}"
             )
@@ -237,7 +247,7 @@ def _resolve_fks_batch(
     # 3. SQLAlchemy Engine or Connection
     if hasattr(engine, "connect"):
         cache_key = (id(engine), table_name, tuple(sorted(fk_columns)))
-        tbl_cache = _ENGINE_FK_CACHE.setdefault(cache_key, {})
+        tbl_cache = _cache()["fk"].setdefault(cache_key, {})
 
         missing_pks = [pk for pk in pk_values if pk not in tbl_cache]
 
@@ -353,6 +363,13 @@ def _resolve_parent_keys(
     if pk_columns == [fk.referenced_column]:
         return values
 
+    cache_key = (id(engine), fk.referenced_table, fk.referenced_column, tuple(pk_columns))
+    cached = _cache()["parent"].setdefault(cache_key, {}) if hasattr(engine, "connect") else {}
+    known = {cached[value] for value in values if value in cached}
+    values = values - cached.keys()
+    if not values:
+        return known
+
     resolved: dict[Any, list[Any]] = {value: [] for value in values}
 
     def record(row: Any) -> None:
@@ -403,7 +420,8 @@ def _resolve_parent_keys(
         raise DatabaseResolutionError(
             f"References to '{parent.name}.{fk.referenced_column}' must resolve to exactly one parent row."
         )
-    return {keys[0] for keys in resolved.values()}
+    cached.update({value: keys[0] for value, keys in resolved.items()})
+    return known | {keys[0] for keys in resolved.values()}
 
 
 def compute_closure(
@@ -411,6 +429,8 @@ def compute_closure(
     selected: dict[str, set[Any]],
     engine: Any = None,
     budget: int | None = None,
+    satisfied: dict[str, set[Any]] | None = None,
+    stop_after: int | None = None,
 ) -> ClosureResult:
     """
     Compute the transitive dependency closure for selected rows.
@@ -445,7 +465,10 @@ def compute_closure(
     ClosureResult
         The expanded selection including all required parent rows.
     """
-    current_selection: dict[str, set[Any]] = {table: set(pks) for table, pks in selected.items()}
+    satisfied = satisfied or {}
+    current_selection: dict[str, set[Any]] = {
+        table: set(pks) - satisfied.get(table, set()) for table, pks in selected.items()
+    }
     for table_name in graph.schema.tables:
         current_selection.setdefault(table_name, set())
 
@@ -453,26 +476,20 @@ def compute_closure(
         table_name: set() for table_name in graph.schema.tables
     }
 
-    # Track inspected rows: table -> set of PKs whose outgoing FKs have been resolved
-    inspected_rows: dict[str, set[Any]] = {table_name: set() for table_name in graph.schema.tables}
+    pending = {table: list(keys) for table, keys in current_selection.items() if keys}
 
     while True:
         checkpoint()
-        # Collect all rows across tables that need FK inspection
-        uninspected_by_table: dict[str, list[Any]] = {}
-        for table_name, pks in current_selection.items():
-            to_inspect = list(pks - inspected_rows[table_name])
-            if to_inspect:
-                uninspected_by_table[table_name] = to_inspect
-
-        if not uninspected_by_table:
+        if stop_after is not None and sum(map(len, current_selection.values())) > stop_after:
             break
+        if not pending:
+            break
+        uninspected_by_table, pending = pending, {}
 
         # Process each table's uninspected batch
         for child_table, pks_to_inspect in uninspected_by_table.items():
             child_meta = graph.schema.tables.get(child_table)
             if child_meta is None or not child_meta.foreign_keys:
-                inspected_rows[child_table].update(pks_to_inspect)
                 continue
 
             pk_cols = child_meta.effective_primary_keys or ["id"]
@@ -497,11 +514,11 @@ def compute_closure(
                     batch_results.get(child_pk, {}).get(child_col) for child_pk in pks_to_inspect
                 } - {None}
                 parent_keys = _resolve_parent_keys(graph, engine, fk, values)
-                additions = parent_keys - current_parent_pks
+                additions = parent_keys - current_parent_pks - satisfied.get(parent_table, set())
                 current_parent_pks.update(additions)
                 closure_additions.setdefault(parent_table, set()).update(additions)
-
-            inspected_rows[child_table].update(pks_to_inspect)
+                if additions:
+                    pending.setdefault(parent_table, []).extend(additions)
 
     total_rows = sum(len(pks) for pks in current_selection.values())
     total_additions = sum(len(pks) for pks in closure_additions.values())

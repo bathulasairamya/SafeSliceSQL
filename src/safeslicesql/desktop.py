@@ -715,7 +715,7 @@ class Desktop:
             ),
             (
                 "Original data",
-                "Unchanged — fingerprint matched"
+                "Read-only snapshot — baseline matched"
                 if validation and validation.source_unchanged
                 else "Could not verify",
             ),

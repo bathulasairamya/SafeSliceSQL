@@ -1,0 +1,67 @@
+{
+  "downloaded_at_utc": "2026-11-14T18:20:00.078228+00:00",
+  "datasets": [
+    {
+      "file": "csv/diamonds.csv",
+      "source": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/diamonds.csv",
+      "rows": 53940,
+      "columns": 10,
+      "bytes": 2772143,
+      "sha256": "9574730b03aba241d899c4a97511c5061b19358fab89510774fb6c24168345c4"
+    },
+    {
+      "file": "csv/iris.csv",
+      "source": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/iris.csv",
+      "rows": 150,
+      "columns": 5,
+      "bytes": 3858,
+      "sha256": "9cc1c345c71bcc9b486b74cbf6063fa66f4bb5e0f603a4b3c3471ec2e5e8e355"
+    },
+    {
+      "file": "csv/penguins.csv",
+      "source": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/penguins.csv",
+      "rows": 344,
+      "columns": 7,
+      "bytes": 13478,
+      "sha256": "e07636bd8af74260099ea2f8678e2eabbf35def579940cc76f67061ee16c06c1"
+    },
+    {
+      "file": "csv/tips.csv",
+      "source": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/tips.csv",
+      "rows": 244,
+      "columns": 7,
+      "bytes": 9729,
+      "sha256": "e54cc4d2ce1bff65d32ca60b3e4b802e06bde1d7e7caf6f796f6bf7370e863b0"
+    },
+    {
+      "file": "csv/titanic.csv",
+      "source": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/titanic.csv",
+      "rows": 891,
+      "columns": 15,
+      "bytes": 57018,
+      "sha256": "81787d320d7f7b03df935e91de8bd19e11d45c5bbcab86ef4d4a76dc91b7d4f2"
+    },
+    {
+      "file": "archives/classicmodels.zip",
+      "source": "https://www.mysqltutorial.org/wp-content/uploads/2023/10/mysqlsampledatabase.zip",
+      "extracted_to": "mysql/classicmodels",
+      "bytes": 52463,
+      "sha256": "bfc5e2ef11d7d51b1b78211cd85df842bffd29f032f2484319b88188b3fcaff6",
+      "zip_crc_check": "passed"
+    },
+    {
+      "file": "archives/employees.zip",
+      "source": "https://codeload.github.com/datacharmer/test_db/zip/refs/heads/master",
+      "extracted_to": "mysql/employees",
+      "bytes": 36707082,
+      "sha256": "01818a35532a3bfb462eab7feb8af3496359dd35390e0e880c8af49f139a7d0b",
+      "zip_crc_check": "passed"
+    }
+  ],
+  "unavailable": [
+    {
+      "dataset": "World",
+      "reason": "Oracle returned Technical Difficulties for both ZIP and TGZ downloads."
+    }
+  ]
+}

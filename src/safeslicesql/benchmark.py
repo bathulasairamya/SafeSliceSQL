@@ -23,6 +23,7 @@ from sqlalchemy import Engine
 
 from safeslicesql.acceptance import AcceptancePolicy
 from safeslicesql.config import load_config
+from safeslicesql.connection_scope import source_transaction
 from safeslicesql.db import get_source_engine, get_target_engine, test_connection
 from safeslicesql.dependency_graph import build_dependency_graph
 from safeslicesql.pipeline import run_pipeline
@@ -201,79 +202,83 @@ def run_benchmark(
         console.print(f"Seeds: [bold]{', '.join(str(s) for s in seeds)}[/bold]")
         console.print(f"Workload: [bold]{workload_path}[/bold]")
 
-        # Introspect schema and build dependency graph once
-        schema = inspect_schema(source_engine)
-        graph = build_dependency_graph(schema)
-        total_source_rows = schema.total_row_count
-        console.print(
-            f"Source Database: [bold]{total_source_rows:,}[/bold] total rows across [bold]{len(schema.table_names)}[/bold] tables."
-        )
+        with source_transaction(source_engine) as snapshot_source:
+            # Introspect schema and build dependency graph once
+            schema = inspect_schema(snapshot_source)
+            graph = build_dependency_graph(schema)
+            total_source_rows = schema.total_row_count
+            console.print(
+                f"Source Database: [bold]{total_source_rows:,}[/bold] total rows across [bold]{len(schema.table_names)}[/bold] tables."
+            )
 
-        initial_source_snapshot = capture_source_snapshot(source_engine)
-        if str(workload_path) == "auto":
-            from safeslicesql.automatic_workload import save_automatic_workload
+            initial_source_snapshot = capture_source_snapshot(snapshot_source)
+            snapshot_source.verified_snapshot = initial_source_snapshot
+            if str(workload_path) == "auto":
+                from safeslicesql.automatic_workload import save_automatic_workload
 
-            workload_path = save_automatic_workload(schema, raw_dir / "workloads")
-        workload_analysis = analyze_workload(workload_path, engine=source_engine)
-        require_usable_workload(workload_analysis, for_selection="workload-aware" in methods)
-        console.print(
-            f"Parsed workload with [bold]{len(workload_analysis.queries)}[/bold] queries "
-            f"([bold]{len(workload_analysis.supported_queries)}[/bold] supported)."
-        )
+                workload_path = save_automatic_workload(schema, raw_dir / "workloads")
+            workload_analysis = analyze_workload(
+                workload_path, engine=snapshot_source, evaluate_source=False
+            )
+            require_usable_workload(workload_analysis, for_selection="workload-aware" in methods)
+            console.print(
+                f"Parsed workload with [bold]{len(workload_analysis.queries)}[/bold] queries "
+                f"([bold]{len(workload_analysis.supported_queries)}[/bold] supported)."
+            )
 
-        total_experiments = len(methods) * len(budget_percents) * len(seeds)
-        console.print(
-            f"\n[bold green]Running {total_experiments} total experiments...[/bold green]\n"
-        )
+            total_experiments = len(methods) * len(budget_percents) * len(seeds)
+            console.print(
+                f"\n[bold green]Running {total_experiments} total experiments...[/bold green]\n"
+            )
 
-        all_runs: list[BenchmarkRunResult] = []
-        exp_index = 0
+            all_runs: list[BenchmarkRunResult] = []
+            exp_index = 0
 
-        for b_pct in budget_percents:
-            budget_rows = max(1, int(total_source_rows * (b_pct / 100.0)))
-            for method in methods:
-                for seed in seeds:
-                    exp_index += 1
-                    run_id = f"{method}_b{b_pct}_s{seed}_{int(time.time() * 1000) % 1000000}"
-                    console.print(
-                        f"[{exp_index}/{total_experiments}] "
-                        f"Method=[bold cyan]{method}[/bold cyan] | "
-                        f"Budget=[bold]{b_pct}%[/bold] ({budget_rows:,} rows) | "
-                        f"Seed=[bold]{seed}[/bold]... ",
-                        end="",
-                    )
-
-                    run_res = run_pipeline(
-                        source_engine=source_engine,
-                        target_engine=target_engine,
-                        schema=schema,
-                        graph=graph,
-                        workload=workload_analysis,
-                        budget=budget_rows,
-                        method=method,
-                        seed=seed,
-                        run_id=run_id,
-                        budget_percent=float(b_pct),
-                        target_database=target_database_name,
-                        initial_source_snapshot=initial_source_snapshot,
-                        acceptance=cfg["acceptance"],
-                    )
-                    if run_res.success:
-                        elapsed = (
-                            run_res.runtime_selection
-                            + run_res.runtime_materialization
-                            + run_res.runtime_validation
-                            + run_res.runtime_workload_eval
-                        )
+            for b_pct in budget_percents:
+                budget_rows = max(1, int(total_source_rows * (b_pct / 100.0)))
+                for method in methods:
+                    for seed in seeds:
+                        exp_index += 1
+                        run_id = f"{method}_b{b_pct}_s{seed}_{int(time.time() * 1000) % 1000000}"
                         console.print(
-                            f"[green]SUCCESS[/green] (surv={run_res.workload.query_survival_rate:.1%}, time={elapsed:.2f}s)"
+                            f"[{exp_index}/{total_experiments}] "
+                            f"Method=[bold cyan]{method}[/bold cyan] | "
+                            f"Budget=[bold]{b_pct}%[/bold] ({budget_rows:,} rows) | "
+                            f"Seed=[bold]{seed}[/bold]... ",
+                            end="",
                         )
-                    else:
-                        console.print(f"[red]FAILED[/red] ({run_res.error_message})")
-                    all_runs.append(run_res)
 
-                    # Export individual run CSV
-                    save_run_results_csv(run_res, output_dir=raw_dir)
+                        run_res = run_pipeline(
+                            source_engine=snapshot_source,
+                            target_engine=target_engine,
+                            schema=schema,
+                            graph=graph,
+                            workload=workload_analysis,
+                            budget=budget_rows,
+                            method=method,
+                            seed=seed,
+                            run_id=run_id,
+                            budget_percent=float(b_pct),
+                            target_database=target_database_name,
+                            initial_source_snapshot=initial_source_snapshot,
+                            acceptance=cfg["acceptance"],
+                        )
+                        if run_res.success:
+                            elapsed = (
+                                run_res.runtime_selection
+                                + run_res.runtime_materialization
+                                + run_res.runtime_validation
+                                + run_res.runtime_workload_eval
+                            )
+                            console.print(
+                                f"[green]SUCCESS[/green] (surv={run_res.workload.query_survival_rate:.1%}, time={elapsed:.2f}s)"
+                            )
+                        else:
+                            console.print(f"[red]FAILED[/red] ({run_res.error_message})")
+                        all_runs.append(run_res)
+
+                        # Export individual run CSV
+                        save_run_results_csv(run_res, output_dir=raw_dir)
 
         # Aggregate all runs into all_benchmark_runs.csv and generate summaries
         benchmark_results = _compile_and_save_summaries(

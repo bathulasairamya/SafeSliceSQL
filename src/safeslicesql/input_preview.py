@@ -62,4 +62,9 @@ def preview_input(config, kind: str, source: str) -> InputPreview:
                         cap(len(str(value).encode("utf-8")), "max_cell_bytes")
             tables.append((label, count, columns))
             total += count
-    return InputPreview(tables, [])
+    return InputPreview(
+        tables,
+        [
+            "File values are preserved as text, with added row IDs. Relationships between files are not inferred. Use MySQL input to preserve declared types and foreign keys."
+        ],
+    )

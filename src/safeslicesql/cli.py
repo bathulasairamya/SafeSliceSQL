@@ -344,7 +344,9 @@ def run(
                 logger.info("Using source-specific workload file: %s", specific_workload)
 
         try:
-            workload_analysis = analyze_workload(workload_path, engine=source_engine)
+            workload_analysis = analyze_workload(
+                workload_path, engine=source_engine, evaluate_source=False
+            )
             require_usable_workload(workload_analysis, for_selection=method == "workload-aware")
             logger.info(
                 "Parsed workload with %d queries (%d supported)",
@@ -405,7 +407,7 @@ def run(
             typer.echo(f"[error] Run failed: {run_result.error_message}", err=True)
             raise typer.Exit(1)
 
-        typer.echo("[run] SafeSlice completed successfully.")
+        typer.echo("[run] SafeSlice completed successfully. Validated rows committed to the target.")
     finally:
         source_engine.dispose()
         if target_engine is not None:

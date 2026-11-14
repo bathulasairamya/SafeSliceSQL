@@ -78,5 +78,5 @@ See `src/safeslicesql/types.py` for complete type definitions.
 5. **Select** → Method-specific row selection with closure
 6. **Materialize** → Create target DB, insert in dependency order
 7. **Evaluate** → Run workload on source and target, compute metrics
-8. **Validate** → Check PK/FK integrity, budget compliance, final source fingerprint
+8. **Validate** → Check PK/FK integrity, indexes, budget and verified source read view; accept before target commit
 9. **Report** → Save CSV results, generate plots

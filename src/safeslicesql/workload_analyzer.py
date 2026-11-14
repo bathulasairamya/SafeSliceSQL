@@ -129,6 +129,7 @@ def load_workload(workload_path: str | Path) -> list[str]:
     if not path.exists():
         raise FileNotFoundError(f"Workload file not found at {path.resolve()}")
 
+    cap(path.stat().st_size, "max_input_bytes")
     return split_statements(path.read_text(encoding="utf-8-sig"))
 
 
@@ -429,12 +430,24 @@ def _is_supported_query(raw_sql: str) -> tuple[bool, str]:
     if re.search(r"\b(?:FROM|JOIN)\b", upper) is None:
         return False, "SELECT without FROM is not supported"
 
+    from_tokens = _clause_tokens(sql, ("FROM",), {"WHERE", "GROUP", "HAVING", "ORDER", "LIMIT"})
+    depth = 0
+    for token in from_tokens:
+        if token.text == "(":
+            depth += 1
+        elif token.text == ")":
+            depth -= 1
+        elif token.text == "," and depth == 0:
+            return False, "Comma joins are not supported; use explicit INNER JOIN syntax."
+
     return True, ""
 
 
 def analyze_workload(
     workload_path: str | Path,
     engine: Engine | None,
+    *,
+    evaluate_source: bool = True,
 ) -> WorkloadAnalysis:
     """
     Parse the workload file and extract query features.
@@ -506,7 +519,7 @@ def analyze_workload(
             analysis.queries.append(query)
             continue
 
-        if engine is not None and hasattr(engine, "connect"):
+        if evaluate_source and engine is not None and hasattr(engine, "connect"):
             try:
                 with engine.connect() as conn:
                     result = conn.execution_options(

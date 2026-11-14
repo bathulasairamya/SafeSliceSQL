@@ -8,14 +8,15 @@ from typing import Callable
 from sqlalchemy import Engine
 
 from safeslicesql.acceptance import AcceptancePolicy
+from safeslicesql.connection_scope import ConnectionScope, source_transaction
 from safeslicesql.dependency_graph import DependencyGraph
 from safeslicesql.runtime import checkpoint, current
 from safeslicesql.sampler import select_rows
 from safeslicesql.security import safe_error
-from safeslicesql.source_snapshot import SourceSnapshot
+from safeslicesql.source_snapshot import SourceSnapshot, capture_source_snapshot
 from safeslicesql.subset_generator import materialize_subset
 from safeslicesql.target_lock import serialized_target
-from safeslicesql.types import BenchmarkRunResult, SchemaMetadata
+from safeslicesql.types import BenchmarkRunResult, GenerationResult, SchemaMetadata
 from safeslicesql.validator import evaluate_workload, validate_subset
 from safeslicesql.workload_analyzer import WorkloadAnalysis
 
@@ -63,36 +64,27 @@ def run_pipeline(
             on_stage(name, value)
         return value
 
-    try:
-        selection = stage(
-            "selection",
-            lambda: select_rows(
-                schema=schema,
-                workload=workload,
-                graph=graph,
-                engine=source_engine,
-                budget=budget,
-                method=method,
-                seed=seed,
-            ),
-        )
-        generation = stage(
-            "generation",
-            lambda: materialize_subset(
-                source_engine=source_engine,
-                target_engine=target_engine,
-                schema=schema,
-                selection=selection,
-                graph=graph,
-                target_database=target_database,
-            ),
-        )
-        if not generation.success:
-            result.error_message = generation.error_message or "Materialization failed."
-            return result
+    def verify(source_connection, target_connection):
+        # These borrowed views see uncommitted rows without closing either transaction.
+        source_view = ConnectionScope(source_connection)
+        source_view.verified_snapshot = initial_source_snapshot
+        target_view = ConnectionScope(target_connection)
+        if on_stage:
+            on_stage(
+                "generation",
+                GenerationResult(
+                    target_database,
+                    rows_inserted={
+                        name: len(keys) for name, keys in selection.selected_rows.items()
+                    },
+                    total_rows_inserted=selection.total_selected,
+                    insertion_order=graph.topological_order(),
+                    pending_validation=True,
+                ),
+            )
         try:
             evaluated = stage(
-                "workload", lambda: evaluate_workload(source_engine, target_engine, workload)
+                "workload", lambda: evaluate_workload(source_view, target_view, workload)
             )
             errors.extend(query.error for query in evaluated.per_query_results if query.error)
             if evaluated.failed_queries and not errors:
@@ -102,8 +94,8 @@ def run_pipeline(
         validation = stage(
             "validation",
             lambda: validate_subset(
-                source_engine=source_engine,
-                target_engine=target_engine,
+                source_engine=source_view,
+                target_engine=target_view,
                 budget_limit=budget,
                 initial_source_row_count=schema.total_row_count,
                 initial_source_snapshot=initial_source_snapshot,
@@ -115,7 +107,61 @@ def run_pipeline(
             errors.extend(result.acceptance.errors)
         if not validation.is_valid and not validation.errors:
             errors.append("Validation checks failed.")
-        result.success = validation.is_valid and not errors
+        if errors:
+            raise ValueError("; ".join(errors))
+
+    try:
+        with source_transaction(source_engine) as source_view:
+            # Establish the read view before any selection or target changes.
+            if capture_source_snapshot(source_view) != initial_source_snapshot:
+                raise ValueError(
+                    "Source changed since the baseline; restart with a fresh baseline."
+                )
+            if initial_source_snapshot.row_count != schema.total_row_count:
+                raise ValueError(
+                    "Source row counts changed during setup; restart with a fresh baseline."
+                )
+            source_view.verified_row_counts = dict(initial_source_snapshot.table_counts) or {
+                name: table.row_count for name, table in schema.tables.items()
+            }
+            selection = stage(
+                "selection",
+                lambda: select_rows(
+                    schema=schema,
+                    workload=workload,
+                    graph=graph,
+                    engine=source_view,
+                    budget=budget,
+                    method=method,
+                    seed=seed,
+                ),
+            )
+            started = time.perf_counter()
+            if (guard := current()) and guard.job:
+                guard.job.phase("generation")
+            try:
+                generation = materialize_subset(
+                    source_engine=source_view,
+                    target_engine=target_engine,
+                    schema=schema,
+                    selection=selection,
+                    graph=graph,
+                    target_database=target_database,
+                    before_commit=verify,
+                )
+                result.generation = generation
+            finally:
+                result.runtime_materialization = max(
+                    0.0,
+                    time.perf_counter()
+                    - started
+                    - result.runtime_workload_eval
+                    - result.runtime_validation,
+                )
+        if not generation.success:
+            result.error_message = generation.error_message or "Materialization failed."
+            return result
+        result.success = result.validation is not None and result.validation.is_valid and not errors
     except Exception as exc:
         errors.append(safe_error(exc))
     result.error_message = "; ".join(error for error in errors if error)

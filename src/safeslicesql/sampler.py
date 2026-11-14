@@ -31,6 +31,7 @@ from safeslicesql.dependency_graph import (
 from safeslicesql.runtime import checkpoint
 from safeslicesql.types import SchemaMetadata, SelectionResult
 from safeslicesql.workload_analyzer import WorkloadAnalysis, require_usable_workload
+from safeslicesql.workload_candidates import query_witnesses
 
 logger = logging.getLogger("safeslicesql.sampler")
 
@@ -119,6 +120,37 @@ def _sample_primary_keys(
     reservoir: list[Any] = []
 
     with engine.connect() as conn:
+        # Rejection sampling over a dense integer key space is uniform without
+        # scanning the whole index. Sparse/noninteger/composite keys fall back
+        # to the exact streaming reservoir below.
+        column = table_meta.get_column(pk_columns[0]) if len(pk_columns) == 1 else None
+        if column and "INT" in column.data_type.upper() and sample_size * 4 < table_meta.row_count:
+            low, high = conn.execute(
+                sa.text(f"SELECT MIN({quoted_columns}), MAX({quoted_columns}) FROM {quoted_table}")
+            ).one()
+            if (
+                isinstance(low, int)
+                and isinstance(high, int)
+                and high - low + 1 <= 4 * table_meta.row_count
+            ):
+                found, attempted = [], set()
+                for _ in range(math.ceil(sample_size * 8 / 500)):
+                    checkpoint()
+                    guesses = []
+                    for _ in range(min(500, sample_size * 8 - len(attempted))):
+                        key = rng.randint(low, high)
+                        if key not in attempted:
+                            attempted.add(key)
+                            guesses.append(key)
+                    if not guesses:
+                        break
+                    statement_keys = sa.text(
+                        f"SELECT {quoted_columns} FROM {quoted_table} WHERE {quoted_columns} IN :keys"
+                    ).bindparams(sa.bindparam("keys", expanding=True))
+                    matches = set(conn.execute(statement_keys, {"keys": guesses}).scalars())
+                    found.extend(key for key in guesses if key in matches)
+                    if len(found) >= sample_size:
+                        return found[:sample_size]
         result = conn.execution_options(stream_results=True).execute(statement).mappings()
         for row_index, row in enumerate(result):
             checkpoint()
@@ -163,6 +195,8 @@ def _candidate_rows_by_table(
         if isinstance(engine, dict):
             table_data = engine.get(table_name, {})
             row_counts[table_name] = len(table_data) if isinstance(table_data, (dict, list)) else 0
+        elif getattr(engine, "verified_row_counts", None) is not None:
+            row_counts[table_name] = engine.verified_row_counts[table_name]
         elif engine is not None and hasattr(engine, "connect"):
             quoted_table = f"`{table_name.replace('`', '``')}`"
             with engine.connect() as conn:
@@ -205,12 +239,16 @@ def _candidate_closure(
     engine: Engine | dict[str, Any] | None,
     table_name: str,
     pk_value: Any,
+    selected: dict[str, set[Any]] | None = None,
+    remaining: int | None = None,
 ) -> dict[str, set[Any]]:
     """Compute the dependency closure for one candidate, independent of selected rows."""
     closure = compute_closure(
         graph,
         {table_name: {pk_value}},
         engine=engine,
+        satisfied=selected,
+        stop_after=remaining,
     )
     return closure.selected_rows
 
@@ -375,7 +413,9 @@ def _select_random_repair(
         checkpoint()
         if pk_value in selected.get(table_name, set()):
             continue
-        closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
+        closure_rows = _candidate_closure(
+            graph, engine, table_name, pk_value, selected, budget - _selection_total(selected)
+        )
         additional_rows = _incremental_row_cost(selected, closure_rows)
         if _selection_total(selected) + additional_rows <= budget:
             _merge_closure(selected, closure_rows)
@@ -454,7 +494,9 @@ def _select_referential(
             checkpoint()
             if pk_value in selected.get(table_name, set()):
                 continue
-            closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
+            closure_rows = _candidate_closure(
+                graph, engine, table_name, pk_value, selected, budget - _selection_total(selected)
+            )
             additional_rows = _incremental_row_cost(selected, closure_rows)
             if _selection_total(selected) + additional_rows <= budget:
                 _merge_closure(selected, closure_rows)
@@ -510,8 +552,8 @@ def _select_workload_aware(
     """
     Proposed method: SafeSliceSQL workload-aware greedy selection.
 
-    Rank once by table weight / standalone closure size. Recheck incremental
-    closure cost against the selected rows when accepting each candidate.
+    Seed actual query witnesses, then fill by table priority and incremental
+    dependency closure. No quadratic standalone-closure scoring pass.
     """
     graph = _ensure_graph(schema, graph)
     selected: dict[str, set[Any]] = {table: set() for table in schema.table_names}
@@ -539,7 +581,38 @@ def _select_workload_aware(
                     table_weights[table_name] = table_weights.get(table_name, 0.0) + 1.5
             table_weights[query.tables[0]] = table_weights.get(query.tables[0], 0.0) + 1.0
 
-    candidate_rows = _candidate_rows_by_table(schema, engine, budget, seed)
+    witnesses = []
+    usable = [q for q in workload.queries if q.is_supported and not q.analysis_error]
+    for query in usable:
+        witnesses.append(
+            query_witnesses(query, schema, engine, min(1000, max(1, budget // max(1, len(usable)))))
+        )
+    # Give every declared query an opportunity before consuming its remaining witnesses.
+    total_closure_additions = 0
+    rejected_candidates = 0
+    for offset in range(max((len(rows) for rows in witnesses), default=0)):
+        for rows in witnesses:
+            if offset >= len(rows) or _selection_total(selected) >= budget:
+                continue
+            witness = rows[offset]
+            closure = compute_closure(
+                graph,
+                witness,
+                engine=engine,
+                satisfied=selected,
+                stop_after=budget - _selection_total(selected),
+            )
+            cost = _incremental_row_cost(selected, closure.selected_rows)
+            if _selection_total(selected) + cost <= budget:
+                _merge_closure(selected, closure.selected_rows)
+                total_closure_additions += max(0, cost - sum(map(len, witness.values())))
+                _record_decision(selection_log, f"Accepted query witness: +{cost} rows")
+            else:
+                rejected_candidates += 1
+
+    candidate_rows = _candidate_rows_by_table(
+        schema, engine, budget if _selection_total(selected) < budget else 0, seed
+    )
     prime_foreign_key_cache(graph, engine, candidate_rows)
     rng = random.Random(seed)
     scored_candidates: list[tuple[float, str, Any]] = []
@@ -547,9 +620,7 @@ def _select_workload_aware(
         workload_value = table_weights.get(table_name, 1.0)
         for candidate_index, pk_value in enumerate(pk_values, start=1):
             checkpoint()
-            closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
-            dependency_cost = sum(len(rows) for rows in closure_rows.values())
-            score = workload_value / max(1, dependency_cost)
+            score = workload_value
             scored_candidates.append((score, table_name, pk_value))
             if candidate_index % 100_000 == 0:
                 logger.info(
@@ -561,10 +632,7 @@ def _select_workload_aware(
     scored_candidates.sort(key=lambda candidate: candidate[0], reverse=True)
     candidate_rows.clear()
 
-    # Rank candidates by their workload value per standalone closure cost.
-    # During selection, recalculate the incremental cost against selected rows.
-    rejected_candidates = 0
-    total_closure_additions = 0
+    # Table priority fills unused space after witnesses; charge only new dependencies.
     for candidate_index, (score, table_name, pk_value) in enumerate(
         scored_candidates,
         start=1,
@@ -573,7 +641,9 @@ def _select_workload_aware(
             break
         if pk_value in selected.get(table_name, set()):
             continue
-        closure_rows = _candidate_closure(graph, engine, table_name, pk_value)
+        closure_rows = _candidate_closure(
+            graph, engine, table_name, pk_value, selected, budget - _selection_total(selected)
+        )
         additional_rows = _incremental_row_cost(selected, closure_rows)
         if additional_rows == 0:
             continue

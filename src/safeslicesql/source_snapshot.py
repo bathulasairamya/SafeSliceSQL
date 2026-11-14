@@ -16,6 +16,7 @@ from safeslicesql.runtime import cap
 class SourceSnapshot:
     fingerprint: str
     row_count: int
+    table_counts: tuple[tuple[str, int], ...] = ()
 
 
 def capture_source_snapshot(engine: sa.Engine) -> SourceSnapshot:
@@ -24,6 +25,8 @@ def capture_source_snapshot(engine: sa.Engine) -> SourceSnapshot:
     Order-independent row hashes avoid relying on query scan order or buffering
     the database. This verifies endpoint contents, not intervening write history.
     """
+    if getattr(engine, "verified_snapshot", None) is not None:
+        return engine.verified_snapshot
     tables = []
     total_rows = 0
     with engine.connect() as connection:
@@ -67,4 +70,8 @@ def capture_source_snapshot(engine: sa.Engine) -> SourceSnapshot:
             total_rows += count
             tables.append((table, schema, count, checksum))
     payload = json.dumps(tables, sort_keys=True, default=str).encode()
-    return SourceSnapshot(hashlib.sha256(payload).hexdigest(), total_rows)
+    return SourceSnapshot(
+        hashlib.sha256(payload).hexdigest(),
+        total_rows,
+        tuple((name, count) for name, _, count, _ in tables),
+    )

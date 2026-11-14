@@ -2,7 +2,31 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
+
+
+def _index_option(value):
+    if isinstance(value, dict):
+        return tuple(sorted((key, _index_option(item)) for key, item in value.items()))
+    if isinstance(value, (tuple, list)):
+        return tuple(_index_option(item) for item in value)
+    # Reflected partial-index predicates are SQL expression objects; their repr
+    # contains memory addresses, while str is the actual definition.
+    return str(value)
+
+
+def _indexes(inspector: Any, table: str) -> set[tuple]:
+    return {
+        (
+            tuple(index.get("column_names", [])),
+            bool(index.get("unique")),
+            _index_option(index.get("expressions", [])),
+            _index_option(index.get("dialect_options", {})),
+            _index_option(index.get("column_sorting", {})),
+        )
+        for index in inspector.get_indexes(table)
+    }
 
 
 def _column_signature(column: dict[str, Any], inspector: Any) -> tuple:
@@ -41,7 +65,10 @@ def _unique_keys(inspector: Any, table: str) -> set[tuple]:
         # SQLite reflection can miss inline UNIQUE clauses containing defaults.
         # Inspect the authoritative indexes, including sqlite_autoindex entries.
         quote = inspector.bind.dialect.identifier_preparer.quote
-        with inspector.bind.connect() as connection:
+        binding = inspector.bind
+        with (
+            binding.connect() if hasattr(binding, "connect") else nullcontext(binding)
+        ) as connection:
             for index in connection.exec_driver_sql(
                 f"PRAGMA index_list({quote(table)})"
             ).fetchall():
@@ -68,6 +95,8 @@ def table_schema_differences(source: Any, target: Any, table: str) -> list[str]:
         differences.append(f"Table '{table}' has different foreign keys.")
     if _unique_keys(source, table) != _unique_keys(target, table):
         differences.append(f"Table '{table}' has different unique constraints.")
+    if _indexes(source, table) != _indexes(target, table):
+        differences.append(f"Table '{table}' has different indexes.")
     source_checks = {c["sqltext"] for c in source.get_check_constraints(table)}
     target_checks = {c["sqltext"] for c in target.get_check_constraints(table)}
     if source_checks != target_checks:

@@ -37,6 +37,8 @@ from safeslicesql.workload_analyzer import (
     WorkloadAnalysis,
     _extract_tables_and_aliases,
     _group_features,
+    _projection_expressions,
+    _references,
 )
 
 logger = logging.getLogger("safeslicesql.validator")
@@ -64,6 +66,36 @@ class QueryMeasurement:
     row_count: int
     has_keys: bool
     elapsed: float
+    comparison_elapsed: float = 0.0
+
+
+def _projected_key_positions(sql, columns, primary_keys):
+    """Use declared primary keys and projection lineage, never label suffixes."""
+    tables, aliases = _extract_tables_and_aliases(sql)
+    projections = _projection_expressions(sql)
+    projected = {}
+    if len(tables) == 1 and any(
+        any(token.text == "*" for token in expression)
+        and not any(token.text == "(" for token in expression)
+        for expression, _ in projections
+    ):
+        # Wildcards with extra expressions are ambiguous; fall back to full rows.
+        if len(projections) != 1:
+            return []
+        for key in primary_keys[tables[0]]:
+            if columns.count(key) == 1:
+                projected[(tables[0], key)] = columns.index(key)
+    elif len(projections) == len(columns):
+        for index, (expression, _) in enumerate(projections):
+            if len(expression) == 1 or (len(expression) == 3 and expression[1].text == "."):
+                refs = _references(expression, aliases, tables)
+                if len(refs) == 1:
+                    projected[refs[0]] = index
+    positions = []
+    for table, keys in primary_keys.items():
+        if keys and all((table, key) in projected for key in keys):
+            positions.extend(projected[(table, key)] for key in keys)
+    return positions
 
 
 def _stream_query(
@@ -76,44 +108,55 @@ def _stream_query(
     expected_columns: tuple[str, ...] | None = None,
 ) -> QueryMeasurement:
     """Stream a query into an indexed temporary store, keeping at most one batch."""
+    tables, _ = _extract_tables_and_aliases(sql)
+    inspector = sa.inspect(engine)
+    primary_keys = {
+        table: inspector.get_pk_constraint(table).get("constrained_columns", []) for table in tables
+    }
     started = time.perf_counter()
+    elapsed = comparison_elapsed = 0.0
     with engine.connect() as connection:
         result = connection.execution_options(
             no_parameters=True, stream_results=True, max_row_buffer=1000
         ).exec_driver_sql(sql)
+        elapsed += time.perf_counter() - started
         try:
             columns = tuple(result.keys())
             if expected_columns is not None and columns != expected_columns:
                 raise ValueError("Source and target query output columns differ.")
-            key_positions = [
-                i
-                for i, label in enumerate(columns)
-                if label.lower() in ("id", "emp_no", "dept_no", "pk", "key", "code")
-                or label.lower().endswith(("_id", "_no", "_code", "_key", "_pk"))
-            ]
+            # Inspect before streaming starts on MySQL: metadata queries cannot
+            # run while an unbuffered cursor is active on the same connection.
+            key_positions = _projected_key_positions(sql, columns, primary_keys)
+            if not key_positions and group_positions:
+                key_positions = group_positions  # Explicit GROUP BY defines output identities.
             batch = []
             count = 0
-            for row in result:
-                cap(count + 1, "max_result_rows")
-                batch.append((0, encode_values(row), int(source), int(not source)))
-                for kind, positions in ((1, key_positions), (2, group_positions)):
-                    if positions:
-                        batch.append(
-                            (
-                                kind,
-                                encode_values(row[i] for i in positions),
-                                int(source),
-                                int(not source),
+            while True:
+                fetched_at = time.perf_counter()
+                rows = result.fetchmany(500)
+                elapsed += time.perf_counter() - fetched_at
+                if not rows:
+                    break
+                compared_at = time.perf_counter()
+                for row in rows:
+                    cap(count + 1, "max_result_rows")
+                    batch.append((0, encode_values(row), int(source), int(not source)))
+                    for kind, positions in ((1, key_positions), (2, group_positions)):
+                        if positions:
+                            batch.append(
+                                (
+                                    kind,
+                                    encode_values(row[i] for i in positions),
+                                    int(source),
+                                    int(not source),
+                                )
                             )
-                        )
-                count += 1
-                if len(batch) >= 1000:
-                    store.add_batch(batch)
-                    batch.clear()
-            if batch:
+                    count += 1
                 store.add_batch(batch)
+                batch.clear()
+                comparison_elapsed += time.perf_counter() - compared_at
             return QueryMeasurement(
-                columns, count, bool(key_positions), time.perf_counter() - started
+                columns, count, bool(key_positions), elapsed, comparison_elapsed
             )
         finally:
             result.close()
@@ -330,6 +373,7 @@ def evaluate_workload(
                     source_engine, query.raw_sql, store, source=True, group_positions=positions
                 )
                 result.execution_time_source = source.elapsed
+                result.comparison_time_source = source.comparison_elapsed
                 result.source_result_known = True
                 result.source_row_count = source.row_count
                 result.source_empty = source.row_count == 0
@@ -342,6 +386,7 @@ def evaluate_workload(
                     expected_columns=source.columns,
                 )
                 result.execution_time_target = target.elapsed
+                result.comparison_time_target = target.comparison_elapsed
                 result.target_row_count = target.row_count
                 result.target_empty = target.row_count == 0
                 result.survived = bool(source.row_count and target.row_count)

@@ -64,15 +64,20 @@ class Guard:
         self.started = time.monotonic()
         self.failure = None
         self.last_memory_check = 0.0
+        self.last_cancel_check = 0.0
 
     def check(self):
         if self.failure:
             raise self.failure
-        if self.cancellation.is_set() or (self.job and self.job.cancel_requested()):
+        now = time.monotonic()
+        cancelled_on_disk = False
+        if self.job and now - self.last_cancel_check >= 0.1:
+            self.last_cancel_check = now
+            cancelled_on_disk = self.job.cancel_requested()
+        if self.cancellation.is_set() or cancelled_on_disk:
             raise OperationCancelled(
                 "Operation cancelled. A committed target, if any, requires review."
             )
-        now = time.monotonic()
         if now - self.started >= self.limits.job_seconds:
             raise LimitExceeded("Job time limit exceeded.")
         if now - self.last_memory_check >= 0.5:

@@ -1,0 +1,4 @@
+# Keep downloaded third-party data locally without adding large files to Git.
+/csv/
+/mysql/
+/archives/

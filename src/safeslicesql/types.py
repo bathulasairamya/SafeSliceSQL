@@ -159,6 +159,7 @@ class GenerationResult:
     insertion_order: list[str] = field(default_factory=list)
     success: bool = False
     error_message: str = ""
+    pending_validation: bool = False
 
 
 # ────────────────────────────────────────────────────────────
@@ -221,6 +222,8 @@ class QueryResult:
     aggregate_retention: float = 0.0
     execution_time_source: float = 0.0
     execution_time_target: float = 0.0
+    comparison_time_source: float = 0.0
+    comparison_time_target: float = 0.0
     error: str = ""
     excluded: bool = False  # True if query pattern is unsupported
     exclusion_reason: str = ""

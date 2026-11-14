@@ -80,18 +80,29 @@ is per temporary comparison database, not a quota on all job artifacts. Use a
 supervised process/container and server-side resource policy for hard isolation.
 Review application SQL as trusted input; these controls are not a hostile SQL sandbox.
 
-Cancellation before the target DML commit rolls back that transaction. MySQL DDL
-is not transactional. Newly created empty tables/schema remnants can remain after
-an interruption. Cancellation or a quality failure after a commit does not restore
-the previous target. Such a target requires review and is not accepted by the app.
+Workload evaluation, structural validation, and acceptance run inside the target
+DML transaction. Rejection or cancellation before commit restores the previous
+target rows. Every inserted batch is compared with its source values; pre-existing
+target triggers and unrelated target tables are rejected before changes.
+MySQL DDL is not transactional. Handled interruptions attempt to remove only
+newly created tables, with limits suspended for cleanup. Process termination or
+a failed cleanup can still leave empty schema remnants. Cancellation arriving
+after commit cannot undo a successful commit.
 Desktop jobs use fresh targets; CLI refreshes an explicitly selected test target.
 
 Copies and their evaluation acquire a per-target lease: a MySQL named lock on
 the connected server or an OS file lock for file-backed SQLite. Another SafeSlice
 worker fails after five seconds instead of concurrently refreshing that target.
-External writers that do not participate in the lock can still change a source
-or target. Source fingerprints compare before/after contents, not all intervening
-writes. Schedule against a stable source or a managed snapshot.
+Selection, copying and evaluation share one repeatable-read source transaction.
+Benchmark matrices reuse that transaction and its verified fingerprint across
+all methods and seeds, avoiding a full fingerprint scan for every experiment.
+Its fingerprint must match the supplied baseline before target writes. Within
+the pipeline, the unchanged-source result refers to that fixed read view; it does
+not claim that external writers have stopped. Standalone validation still takes
+a fresh endpoint fingerprint. Schema changes and external target writers remain
+outside this cooperative lease; use a dedicated target and avoid concurrent DDL.
+The source snapshot keeps versions alive until acceptance finishes, so schedule
+large runs against a replica or a maintenance window.
 
 Library callers should create engines using `runtime.bounded_engine` inside
 `runtime.execution_context`, with `read_only=True` for a pre-existing source.

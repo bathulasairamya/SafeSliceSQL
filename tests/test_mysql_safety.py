@@ -21,6 +21,50 @@ from safeslicesql.workload_analyzer import analyze_workload
 pytestmark = pytest.mark.db
 
 
+def test_mysql_pipeline_acceptance_rolls_back_and_preserves_json(mysql_pair, tmp_path):
+    from safeslicesql.acceptance import AcceptancePolicy
+    from safeslicesql.pipeline import run_pipeline
+    from safeslicesql.source_snapshot import capture_source_snapshot
+
+    source, target = mysql_pair
+    ddl = "CREATE TABLE t(id INT PRIMARY KEY, document JSON, created DATE) ENGINE=InnoDB"
+    execute(
+        source,
+        ddl,
+        "INSERT INTO t VALUES(1,JSON_OBJECT('value',1),'2025-01-01'),(2,JSON_OBJECT('value',2),'2025-01-02')",
+    )
+    execute(target, ddl, "INSERT INTO t VALUES(99,JSON_OBJECT('old',true),'2024-01-01')")
+    path = tmp_path / "workload.sql"
+    path.write_text("SELECT * FROM t", encoding="utf-8")
+    schema = inspect_schema(source)
+    options = dict(
+        source_engine=source,
+        target_engine=target,
+        schema=schema,
+        graph=build_dependency_graph(schema),
+        workload=analyze_workload(path, source),
+        budget=1,
+        method="workload-aware",
+        seed=42,
+        run_id="mysql_review",
+        budget_percent=50,
+        target_database=target.url.database,
+        initial_source_snapshot=capture_source_snapshot(source),
+        acceptance=AcceptancePolicy(min_result_retention=1),
+    )
+    rejected = run_pipeline(**options)
+    assert not rejected.success and rejected.acceptance and not rejected.acceptance.passed
+    with target.connect() as connection:
+        assert connection.exec_driver_sql("SELECT id FROM t").all() == [(99,)]
+    accepted = run_pipeline(**{**options, "budget": 2, "budget_percent": 100})
+    assert accepted.success, accepted.error_message
+    with source.connect() as sc, target.connect() as tc:
+        assert (
+            sc.exec_driver_sql("SELECT * FROM t ORDER BY id").all()
+            == tc.exec_driver_sql("SELECT * FROM t ORDER BY id").all()
+        )
+
+
 @pytest.fixture
 def mysql_pair():
     url = os.environ.get("SAFESLICE_TEST_MYSQL_URL")

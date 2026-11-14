@@ -50,6 +50,27 @@ When a row has a NULL value in a foreign-key column:
 
 5. **No incremental updates.** Each run replaces the target subset rows transactionally; existing schemas must be compatible. There is no support for incrementally adding rows to an existing subset.
 
+6. **Workload witnesses are a heuristic.** The selector seeds bounded, ordered
+   primary-key witnesses from actual FROM/JOIN/WHERE conditions, then fills by
+   table priority and incremental dependency cost. This preserves predicate and
+   join participants but does not solve aggregate thresholds, HAVING, or global
+   query-coverage optimization. Acceptance checks the actual workload before commit.
+
+7. **Sampling and verification costs.** Dense integer keys use bounded rejection
+   sampling; sparse, textual and composite keys use a full streaming reservoir.
+   Source fingerprinting still reads every source value. Deep self-reference
+   chains can require sequential dependency lookups; wide independent deletion
+   levels are batched. Small output percentages do not guarantee short runs.
+
+8. **File semantics are explicit.** CSV/Excel imports preserve values as text and
+   add synthetic IDs. They do not guess numeric types, keys, or relationships.
+   Use an existing MySQL schema when those semantics matter.
+
+9. **Automatic workloads are structural demonstrations.** Large result sets use
+   ordered samples of at most 1,000 rows (or the configured result cap, if lower).
+   Their retention measures those samples, not the entire application workload.
+   Comma joins are rejected; use explicit INNER JOIN syntax.
+
 ## Future Work
 
 - Composite foreign-key support

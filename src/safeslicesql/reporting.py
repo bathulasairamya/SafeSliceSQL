@@ -123,6 +123,8 @@ def save_run_results_csv(
             "aggregate_retention",
             "execution_time_source",
             "execution_time_target",
+            "comparison_time_source",
+            "comparison_time_target",
             "excluded",
             "exclusion_reason",
             "error",
@@ -143,6 +145,8 @@ def save_run_results_csv(
                         "aggregate_retention": q.aggregate_retention,
                         "execution_time_source": q.execution_time_source,
                         "execution_time_target": q.execution_time_target,
+                        "comparison_time_source": q.comparison_time_source,
+                        "comparison_time_target": q.comparison_time_target,
                         "excluded": q.excluded,
                         "exclusion_reason": q.exclusion_reason,
                         "error": q.error,
@@ -192,14 +196,14 @@ def print_validation_summary(report: ValidationReport) -> None:
         else f"Missing: {report.tables_missing}",
     )
     table.add_row(
-        "Source Immutability",
+        "Source Baseline",
         "[yellow]NOT VERIFIED[/yellow]"
         if report.source_unchanged is None
         else ("[green]PASS[/green]" if report.source_unchanged else "[red]FAIL[/red]"),
         "No before-run content fingerprint was supplied"
         if report.source_unchanged is None
         else (
-            "Source contents match the before-run fingerprint"
+            "Source read view matches the baseline fingerprint"
             if report.source_unchanged
             else "Source database altered"
         ),
@@ -316,6 +320,8 @@ def print_generation_summary(result: GenerationResult) -> None:
     """Print a human-readable materialization summary."""
     status_color = "green" if result.success else "red"
     status_text = "SUCCESS" if result.success else "FAILED"
+    if result.pending_validation:
+        status_color, status_text = "yellow", "STAGED — CHECKING BEFORE COMMIT"
 
     console.print(
         f"\n[bold]Subset Materialization:[/bold] [{status_color}]{status_text}[/{status_color}]"
