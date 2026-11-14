@@ -158,6 +158,14 @@ def bounded_engine(url, *, read_only: bool = False, **kwargs):
     if guard is None:
         return engine
 
+    @sa.event.listens_for(engine, "handle_error")
+    def preserve_interrupted_connection(context):
+        # Our cooperative stops bypass generic Exception handlers, but do not
+        # indicate a broken connection. Keep it available for rollback instead
+        # of SQLAlchemy's default invalidation for BaseException subclasses.
+        if isinstance(context.original_exception, OperationInterrupted):
+            context.is_disconnect = False
+
     @sa.event.listens_for(engine, "before_cursor_execute")
     def before(connection, cursor, statement, parameters, context, executemany):
         if current() is not guard:

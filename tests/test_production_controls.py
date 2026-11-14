@@ -63,9 +63,10 @@ def test_invalid_acceptance_thresholds_are_rejected(value):
         AcceptancePolicy(value)
 
 
-def test_cancelled_copy_rolls_back_existing_target_rows():
+@pytest.mark.parametrize("stop", ["cancel", "deadline"])
+def test_interrupted_copy_rolls_back_existing_target_rows(stop):
     cancellation = threading.Event()
-    with execution_context(Limits(), cancellation):
+    with execution_context(Limits(), cancellation) as guard:
         source, target = bounded_engine("sqlite://"), bounded_engine("sqlite://")
         try:
             for engine, value in ((source, 1), (target, 99)):
@@ -77,9 +78,12 @@ def test_cancelled_copy_rolls_back_existing_target_rows():
             @sa.event.listens_for(target, "after_cursor_execute")
             def cancel_on_insert(conn, cursor, statement, parameters, context, many):
                 if statement.startswith("INSERT"):
-                    cancellation.set()
+                    if stop == "cancel":
+                        cancellation.set()
+                    else:
+                        guard.started -= guard.limits.job_seconds
 
-            with pytest.raises(OperationCancelled):
+            with pytest.raises(OperationCancelled if stop == "cancel" else LimitExceeded):
                 materialize_subset(
                     source,
                     target,
@@ -89,11 +93,26 @@ def test_cancelled_copy_rolls_back_existing_target_rows():
                     "target",
                 )
             cancellation.clear()
+            guard.started = time.monotonic()
             with target.connect() as connection:
                 assert connection.exec_driver_sql("SELECT * FROM t").all() == [(99,)]
         finally:
             source.dispose()
             target.dispose()
+
+
+def test_bounded_engine_still_invalidates_disconnected_connections():
+    with execution_context():
+        engine = bounded_engine("sqlite://")
+        try:
+            with engine.connect() as connection:
+                connection.connection.driver_connection.close()
+                with pytest.raises(sa.exc.DBAPIError) as error:
+                    connection.exec_driver_sql("SELECT 1")
+                assert error.value.connection_invalidated
+                assert connection.invalidated
+        finally:
+            engine.dispose()
 
 
 def test_sqlite_statement_timeout_interrupts_real_work():
