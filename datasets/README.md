@@ -1,5 +1,7 @@
 # Test datasets
 
+[Quick start](../README.md) | [Operations](../docs/operations.md)
+
 Downloaded datasets live here, separately from application code and generated results.
 The CSVs and SQL archives have been checked for structural integrity. They have
 not yet been imported and tested end to end in SafeSliceSQL.

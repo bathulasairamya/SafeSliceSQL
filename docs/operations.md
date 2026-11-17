@@ -1,33 +1,79 @@
-# Production controls and pilot operation
+# Operations guide
 
-SafeSliceSQL now provides bounded jobs, cancellation, durable local job records,
-credential references, owned-schema retention, measured synthetic scale checks,
-and application-query acceptance requirements. These are foundations for a
-controlled, single-user pilot within the supported MySQL schema/SQL scope.
-They do not establish production certification or support for arbitrary schemas.
+[Quick start](../README.md) | [Technical reference](technical.md) | [Datasets](../datasets/README.md)
 
-## Use the desktop
+Use the README for installation and a first demo. Commands below run from the
+repository root with the virtual environment activated:
 
-1. Run `demo.bat` and choose the source database or input file.
-2. Open **Options**. Choose your application's SQL file if you have one.
-   Automatic queries are structural probes, not evidence of business suitability.
-3. Set minimum query survival and exact result retention percentages. Optionally
-   enter required query IDs such as `Q1,Q5`. IDs follow statement order in the SQL
-   file. The desktop defaults to 100% survival and 0% exact result retention.
-4. Create the copy. Both integrity checks and query quality requirements must pass
-   before the desktop labels the copy ready. Failure details and CSV reports
-   explain a rejected copy; increase the budget or review the workload/method.
-5. Press **Cancel** while work is running to request a safe stop. It may take until
-   the current database statement returns or times out. Keep the window open.
-6. **Previous jobs** shows completed, rejected, failed, stopped, and interrupted jobs.
-   Restore a desktop job's choices and click Create to restart from the current
-   original input into a fresh target. This is a full restart, not partial resume.
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+If PowerShell blocks activation, replace `safeslice` with
+`.\.venv\Scripts\python.exe -m safeslicesql.cli`, and `python` with
+`.\.venv\Scripts\python.exe`. The CLI's `--help` lists every available option.
+
+## CLI copies and benchmarks
+
+Configure `.env`, load the source, and create a **dedicated target database** in
+MySQL before running the CLI. `run` refreshes compatible target tables; do not use
+a target containing data you need to keep. Desktop preparation creates a fresh target.
+For example, after importing Employees, execute this in a MySQL client:
+
+```sql
+CREATE DATABASE IF NOT EXISTS employees_slice;
+```
+
+Then inspect, preview, copy, and validate:
+
+```powershell
+safeslice inspect --database employees
+safeslice run --method workload-aware --budget-percent 20 --seed 42 --source employees --target employees_slice --workload auto --dry-run
+safeslice run --method workload-aware --budget-percent 20 --seed 42 --source employees --target employees_slice --workload auto --output-dir results/manual-demo
+safeslice validate --source employees --target employees_slice
+```
+
+Replace `auto` with a matching application SQL file for a meaningful business
+workload. The bundled `workloads/workload.sql` targets Employees; do not reuse it
+unchanged with unrelated schemas. CLI output folders contain metrics, not SQL dumps;
+use MySQL's `mysqldump` separately when a database export is needed.
+
+For a 1% comparison, [create_1pct_targets.sql](../scripts/create_1pct_targets.sql)
+creates dedicated Employees targets without dropping databases. Run each method
+against its matching target with `--budget-percent 1` and an explicit workload.
+The percentage is a maximum row count including dependencies, not a storage ratio.
+
+The checked-in [benchmark YAML](../benchmarks/benchmarks.yaml) uses SQLite example
+URLs. For MySQL, copy it, remove its `database:` section to use `.env`, choose a
+matching workload and a dedicated existing target, and keep output paths under
+`results/`. Then run:
+
+```powershell
+safeslice benchmark --config benchmarks/benchmarks_mysql.yaml
+```
+
+The benchmark refreshes the configured target between experiments. Raw run CSVs,
+summary CSV/Markdown, and plots go to the configured output directories. Use matched
+budgets/seeds across all three methods and inspect failed or excluded queries.
+
+## Acceptance and desktop controls
+
+In desktop **Options**, set a workload, minimum survival/retention percentages,
+and required query IDs such as `Q1,Q5` (statement order in the SQL file). Defaults
+are 100% query survival and 0% exact result retention. Integrity and quality gates
+must pass before a copy is marked ready. Increase the budget or revise the workload
+when a copy is rejected; structural validity alone is insufficient.
+
+Use **Cancel** for a safe stop and keep the window open until work returns.
+**Previous jobs** reopens saved reports or restores choices for a full restart into
+a fresh target; it does not resume partial SQL work. **Verify again** reads current
+source/target contents, while saved verification represents its recorded timestamp.
 
 A query surviving means it still produces an eligible result under the project's
 metric definitions. It does not mean every answer is unchanged. Exact result
 retention compares typed output rows; aggregate values can change when input rows
 are removed. Review the per-query and aggregate metrics as well as survival. See
-[metrics](metrics.md) for denominator and empty-result rules. Required query IDs
+[metric definitions](technical.md#metrics-and-evidence) for denominator and empty-result rules. Required query IDs
 that are missing, excluded, failed, or lost reject the copy.
 
 For saved benchmark YAML, add an acceptance section (fractions from 0 to 1):
