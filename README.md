@@ -4,61 +4,95 @@ Create a smaller MySQL database under a hard row budget while preserving support
 foreign-key relationships. Compare random-repair, referential, and workload-aware
 sampling, then inspect integrity checks and query-retention results.
 
-## Start here
+## Windows quick start
 
-This repository has four maintained guides:
+The first demo uses the bundled [demo-orders.csv](examples/demo-orders.csv).
+You'll make a **5-row copy of a 20-row dataset**. The app creates both MySQL
+databases for this demo, so you can start with an empty server.
 
-- **This README:** installation, first run, and demo checklist.
-- [Technical reference](docs/technical.md): architecture, algorithms, metrics, and limitations.
-- [Operations guide](docs/operations.md): CLI runs, benchmarks, credentials, limits, and recovery.
-- [Dataset guide](datasets/README.md): downloaded CSVs and MySQL sample databases.
+### 1. Get the repo and install the app
 
-## Install and configure
+You'll need Git, Python 3.10 or newer with Tkinter, and a running **MySQL 8.x**
+server with InnoDB. MySQL is required even for a CSV input because the smaller
+copy is stored in MySQL. If you need a local server, follow the
+[MySQL 8.4 Windows setup guide](https://dev.mysql.com/doc/refman/8.4/en/windows-installation.html).
+Workbench alone does not install or start the server.
 
-Requires **Python 3.10+** and **MySQL 8.x with InnoDB**. CSV/Excel imports also need
-MySQL; SQLite is used for local generated tests. Run these PowerShell commands
-from the project folder:
+Open PowerShell in the folder where you want the project:
 
 ```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+git clone https://github.com/bathulasairamya/SafeSliceSQL.git
+cd SafeSliceSQL
+```
+
+Already cloned it? Open PowerShell in that checkout and run `git pull --ff-only`.
+Run all remaining commands from the folder containing `demo.bat`.
+
+```powershell
+py -3.10 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-demo-windows-py310.txt "PyMySQL[rsa]"
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
 notepad .env
 ```
 
-Set the `SAFESLICE_SOURCE_*` and `SAFESLICE_TARGET_*` connection values in `.env`.
-Keep source and target databases distinct. Existing sources need read access;
-the desktop's imported sources and fresh targets need CREATE/DROP DATABASE and
-table write privileges on the target server. See the operations guide for grants
-and credential storage. Never commit `.env` or put real passwords in commands.
+The example uses the pinned Windows/Python 3.10 dependencies. If you have a newer
+Python, use `py -3 -m venv .venv` and replace the requirements filename with
+`requirements.txt`. The [PyMySQL RSA extra](https://github.com/PyMySQL/PyMySQL#installation)
+supports MySQL accounts using SHA-2 password authentication.
 
-`requirements.txt` installs the package plus test, Excel, and credential-vault
-support. For the pinned Windows/Python 3.10 demo environment, use
-`requirements-demo-windows-py310.txt` instead in a Python 3.10 virtual environment.
-Other platforms/Python versions should use `requirements.txt` and run the checks below.
+### 2. Point the app at your MySQL server
 
-## Create and verify a copy
+In `.env`, set `SAFESLICE_TARGET_HOST`, `SAFESLICE_TARGET_PORT`,
+`SAFESLICE_TARGET_USER`, and `SAFESLICE_TARGET_PASSWORD` to your own server and
+credentials. For a local install, the example host and port are `localhost` and
+`3306`. Save the file as `.env` and keep it private.
+
+For the CSV demo you can leave the source settings and both database names from
+`.env.example` as they are. The app imports the CSV onto the **target server**
+and creates fresh `safeslice_input_…` and `safeslice_output_…` databases. Your
+target account needs permission to create, write to, and clean up those schemas.
+For a shared server, ask the administrator for the
+[demo account grants](scripts/least_privilege_mysql.sql).
+
+### 3. Run and show the demo
 
 ```powershell
 .\demo.bat
 ```
 
-1. Choose an existing MySQL database, a UTF-8 CSV file/folder, or an `.xlsx` workbook.
-   Start with `examples/demo-orders.csv` or a file listed in the dataset guide.
-2. Review input statistics, set the percentage, and click **Create smaller copy**.
-   The budget includes required parent records across all tables.
-3. Open **Results > Verify my copy** to compare copied values and follow declared
-   relationships. **View charts** shows size and integrity results.
-4. Under **Options**, enable comparison of all three methods or provide a business
-   SQL workload and acceptance thresholds. The desktop defaults to 100% query survival.
-5. Use **Export report** for a self-contained HTML report; browser printing can save
-   a PDF. **Previous jobs** can reopen saved results or restore choices for a new run.
+1. Select **CSV file**, click **Choose file...**, and open `examples/demo-orders.csv`.
+   The input preview should show **20 rows**.
+2. Click **25%**, leave the other settings at their defaults, and click **Create
+   smaller copy**.
+3. On **Results**, check that **Rows in the smaller copy** shows **5 / 5 allowed**.
+4. Open **Verify my copy** to compare original and copied values. Open **View
+   charts** to show the size reduction or **Export report** to save an HTML report.
 
-CSV/Excel files use headers in the first row. Values are imported as text with
-added row IDs; numeric/date types and foreign keys are not inferred. Excel formulas
-remain text. Use a relational MySQL source to demonstrate relationship preservation.
-Imported sources and generated copies remain on MySQL until explicitly cleaned up.
+If the desktop window doesn't open, run it in PowerShell to see the error:
+
+```powershell
+.\.venv\Scripts\python.exe -m safeslicesql.desktop
+```
+
+If the job cannot connect, check that MySQL is running and that the host and
+port match `.env`. For **Access denied**, check the credentials and privileges
+in **Options → MySQL connections...**. If the server is unavailable, you can
+still run the SQLite self-test below to exercise the pipeline locally.
+
+## Try a relational demo
+
+To show foreign-key preservation, choose an existing MySQL schema such as
+the [World sample database](datasets/README.md). Configure the
+`SAFESLICE_SOURCE_*` values for a read-only account on that database, then choose
+**MySQL database** in the app. Required parent rows count toward the copy budget.
+After creating the copy, use **Verify my copy** to follow a child row to its parent.
+File imports store values as text with generated row IDs and do not infer relationships.
+
+Under **Options**, you can compare the three selection methods or supply your own
+SQL workload. Comparison mode exports additional charts and leaves the last
+method's copy in the target. Imported sources and generated copies stay on MySQL
+after the demo. See the [operations guide](docs/operations.md#explicit-retention)
+for cleanup.
 
 For the numbered terminal menu:
 
@@ -66,9 +100,11 @@ For the numbered terminal menu:
 & '.\Terminal Demo.bat'
 ```
 
-Choose **9** to prepare a dataset, **3** to preview selection, **4** to create and
-validate a copy, or **5** to compare methods. CLI runs and benchmark YAML are covered
-in the operations guide.
+Choose **9** to prepare the bundled CSV, **3** to preview selection, **4** to create
+and validate a copy, or **5** to compare methods. See the
+[operations guide](docs/operations.md) for the CLI and benchmarks, the
+[technical reference](docs/technical.md) for algorithms and metrics, and the
+[dataset guide](datasets/README.md) for other demo inputs.
 
 ## Check before presenting
 
