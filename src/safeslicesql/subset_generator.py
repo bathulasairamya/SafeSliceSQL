@@ -141,10 +141,13 @@ def materialize_subset(
 
     # 6. Insert selected rows in topological order using an atomic transaction
     rows_inserted: dict[str, int] = {}
+    fresh_tables = set(created_tables)
     try:
         with source_engine.connect() as s_conn, target_engine.begin() as t_conn:
             # DML only: rollback restores the previous subset if any copy fails.
             for tbl_name in reversed(insertion_order):
+                if tbl_name in fresh_tables:
+                    continue
                 table_meta = schema.tables[tbl_name]
                 if _has_self_reference(table_meta):
                     # A bulk DELETE can visit parents before children on MySQL.
@@ -220,6 +223,8 @@ def materialize_subset(
                 raise ValueError(
                     f"Target row count ({actual_rows}) exceeds hard budget limit ({selection.budget})."
                 )
+            if actual_rows != total_selected:
+                raise ValueError("Actual target row count does not match the selection.")
             if before_commit is not None:
                 before_commit(s_conn, t_conn)
             checkpoint()

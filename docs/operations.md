@@ -63,6 +63,9 @@ and required query IDs such as `Q1,Q5` (statement order in the SQL file). Defaul
 are 100% query survival and 0% exact result retention. Integrity and quality gates
 must pass before a copy is marked ready. Increase the budget or revise the workload
 when a copy is rejected; structural validity alone is insufficient.
+Workload-aware selection considers required queries first in each witness round.
+Use **View charts** for copy size and integrity charts. Enable comparison mode
+to also export the benchmark comparison PNGs.
 
 Use **Cancel** for a safe stop and keep the window open until work returns.
 **Previous jobs** reopens saved reports or restores choices for a full restart into
@@ -140,9 +143,11 @@ Copies and their evaluation acquire a per-target lease: a MySQL named lock on
 the connected server or an OS file lock for file-backed SQLite. Another SafeSlice
 worker fails after five seconds instead of concurrently refreshing that target.
 Selection, copying and evaluation share one repeatable-read source transaction.
+CLI copy runs fingerprint that view once and reuse the exact counts from the scan.
 Benchmark matrices reuse that transaction and its verified fingerprint across
 all methods and seeds, avoiding a full fingerprint scan for every experiment.
-Its fingerprint must match the supplied baseline before target writes. Within
+If a caller supplies a baseline from a separate read view, the current fingerprint
+must match before target writes. Within
 the pipeline, the unchanged-source result refers to that fixed read view; it does
 not claim that external writers have stopped. Standalone validation still takes
 a fresh endpoint fingerprint. Schema changes and external target writers remain

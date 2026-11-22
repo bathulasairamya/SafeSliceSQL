@@ -90,7 +90,9 @@ guide for cancellation, crash recovery, locking, and concurrent-writer boundarie
 
 Workload-aware selection first obtains bounded primary-key witnesses using the
 actual FROM/JOIN/WHERE conditions of each supported query. It visits witnesses
-round-robin across queries, adding their required dependencies only when they fit.
+round-robin across queries, visiting required queries first within each round.
+Candidate foreign keys are fetched in bounded batches before evaluation. A witness
+is accepted only when its required dependencies fit in the remaining budget.
 Remaining sampled candidates are ranked by static table weights. Incremental
 closure traversal skips previously selected dependencies and stops once the
 remaining budget is exceeded. No standalone closure is computed for scoring.
@@ -125,9 +127,10 @@ are errors rather than a silent fallback to uniform weights.
    the hard row budget. Reject candidates that do not fit.
 6. Stop when the budget is full or all sampled candidates have been considered.
 
-Incremental feasibility is recalculated at acceptance time; rankings and table
-weights remain fixed. A rejected candidate is not revisited, so the result may
-leave unused budget and has no optimality guarantee.
+Incremental feasibility is recalculated at acceptance time while rankings and
+table weights remain fixed. Adding more rows cannot make a rejected closure fit:
+each added row that reduces its closure cost also consumes a budget slot.
+The sampled candidate pool and fixed order can still leave budget unused.
 
 ### Baselines
 
@@ -149,13 +152,19 @@ than all source primary keys. Dense integer keys use uniform rejection sampling
 with bounded indexed lookups. Sparse, textual and composite keys retain an exact
 streaming reservoir scan. Ordering can require database work when an index
 cannot satisfy the ordering. Scoring
-sorts C candidates in O(C log C), in addition to traversal and database costs.
+groups C shuffled candidates by table weight in O(C + T log T), where T is the
+number of distinct weights (at most the number of tables), in addition to traversal
+and database costs. Equal-weight candidates retain their seeded shuffle order.
+Selection totals are maintained incrementally; rows without foreign keys skip
+graph traversal. A zero-row library budget performs no selection database reads.
 
 Standalone workload analysis can stream result rows to count them; pipeline
 setup skips that redundant execution. Evaluation streams both
 results into a temporary indexed SQLite store for exact multiset and distinct-key
 comparisons. Python memory is bounded by a batch and individual row size;
-temporary disk use scales with distinct result, key, and group tuples. The store
+temporary disk use scales with distinct result, key, and group tuples. Repeated
+tuples within each bounded input batch are combined before indexed writes,
+preserving exact source/target multiplicities. The store
 is closed and removed after each query, including failures.
 
 ## Metrics and evidence
@@ -177,12 +186,12 @@ Query survival is the number of supported queries returning at least one row on 
 
 Validation checks table/column definitions, primary/foreign keys, unique/check constraints, actual target row count, and referential integrity. Required checks that cannot execute fail validation.
 
-CLI runs and benchmarks capture a streaming content fingerprint during setup.
-Each pipeline establishes a repeatable-read source transaction and verifies its
-fingerprint against that baseline before target changes. Selection, copying and
-evaluation use the same read view; final validation reuses that verified
-fingerprint. It includes schema definitions, values, types and row multiplicities.
-Source fingerprinting still requires full scans.
+CLI runs and benchmarks capture a streaming content fingerprint inside the
+repeatable-read transaction used for selection, copying, and evaluation. Schema
+setup and final validation reuse evidence from that scan, including exact table
+counts. When the pipeline receives an earlier baseline from a separate
+transaction, it scans the new read view and checks for drift before target writes.
+Fingerprints include schema definitions, values, types and row multiplicities.
 
 Standalone validation without a before-run content snapshot reports source immutability as **NOT VERIFIED** (`source_unchanged=None`). A row-count baseline can prove a change but cannot prove unchanged content. Structural validity can still pass with source history unverified. API callers can use `capture_source_snapshot(engine)` and pass the result as `initial_source_snapshot` to `validate_subset`.
 
@@ -199,8 +208,10 @@ Generated observations describe the measured values and ties. They do not assert
 ### Timing
 
 Selection, materialization, validation, and workload evaluation have separate timings.
-Initial baseline capture and source snapshot preflight are setup work outside
-those stage timings. Materialization time excludes its nested evaluation and
+Source snapshot preflight is recorded separately as `runtime_preflight` and is
+included in exported total runtime. A CLI copy includes its source setup in this
+measurement. A benchmark's shared baseline remains outside individual trial timings.
+Materialization time excludes its nested evaluation and
 validation steps to avoid double counting. Failed runs do not contribute
 artificially short timings to successful-run means.
 

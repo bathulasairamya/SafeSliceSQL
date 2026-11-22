@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import math
 import random
+from itertools import islice
 from typing import Any
 
 import sqlalchemy as sa
@@ -39,6 +40,7 @@ logger = logging.getLogger("safeslicesql.sampler")
 METHODS = ("random-repair", "referential", "workload-aware")
 CANDIDATE_POOL_MULTIPLIER = 1.25
 SELECTION_LOG_LIMIT = 1000
+WITNESS_PREFETCH_SIZE = 64
 
 
 def _ensure_graph(
@@ -188,6 +190,8 @@ def _candidate_rows_by_table(
     seed: int,
 ) -> dict[str, list[Any]]:
     """Build a seeded candidate pool capped near the requested row budget."""
+    if budget <= 0:
+        return {name: [] for name in schema.table_names}
     rng = random.Random(seed)
     row_counts: dict[str, int] = {}
 
@@ -243,6 +247,8 @@ def _candidate_closure(
     remaining: int | None = None,
 ) -> dict[str, set[Any]]:
     """Compute the dependency closure for one candidate, independent of selected rows."""
+    if not graph.schema.tables[table_name].foreign_keys:
+        return {table_name: {pk_value} - (selected or {}).get(table_name, set())}
     closure = compute_closure(
         graph,
         {table_name: {pk_value}},
@@ -287,6 +293,8 @@ def select_rows(
     budget: int = 0,
     method: str = "random-repair",
     seed: int = 42,
+    *,
+    priority_queries: tuple[str, ...] = (),
 ) -> SelectionResult:
     """
     Select rows using the specified method.
@@ -314,6 +322,8 @@ def select_rows(
         'workload-aware'.
     seed : int
         Random seed for reproducibility.
+    priority_queries : tuple[str, ...]
+        Workload query IDs to visit first in each witness round.
 
     Returns
     -------
@@ -361,6 +371,7 @@ def select_rows(
             engine,
             budget,
             seed,
+            priority_queries,
         )
     finally:
         clear_fk_cache()
@@ -382,6 +393,7 @@ def _select_random_repair(
     """
     graph = _ensure_graph(schema, graph)
     selected: dict[str, set[Any]] = {table: set() for table in schema.table_names}
+    selected_total = 0
     selection_log: list[str] = [f"Random repair baseline with seed={seed}"]
     rejected_candidates = 0
     total_closure_additions = 0
@@ -414,18 +426,19 @@ def _select_random_repair(
         if pk_value in selected.get(table_name, set()):
             continue
         closure_rows = _candidate_closure(
-            graph, engine, table_name, pk_value, selected, budget - _selection_total(selected)
+            graph, engine, table_name, pk_value, selected, budget - selected_total
         )
         additional_rows = _incremental_row_cost(selected, closure_rows)
-        if _selection_total(selected) + additional_rows <= budget:
+        if selected_total + additional_rows <= budget:
             _merge_closure(selected, closure_rows)
+            selected_total += additional_rows
             total_closure_additions += max(0, additional_rows - 1)
             _record_decision(
                 selection_log,
                 f"Accepted {table_name}.{pk_value}: +{additional_rows} rows, "
-                f"total={_selection_total(selected)}",
+                f"total={selected_total}",
             )
-            if _selection_total(selected) >= budget:
+            if selected_total >= budget:
                 break
         else:
             rejected_candidates += 1
@@ -438,7 +451,7 @@ def _select_random_repair(
                 "Random-repair evaluated %d/%d candidates; selected %d/%d budget rows",
                 candidate_index,
                 len(candidate_pairs),
-                _selection_total(selected),
+                selected_total,
                 budget,
             )
 
@@ -449,7 +462,7 @@ def _select_random_repair(
         selected_rows={
             table: _stable_pk_values(list(values)) for table, values in selected.items() if values
         },
-        total_selected=_selection_total(selected),
+        total_selected=selected_total,
         closure_additions=total_closure_additions,
         rejected_candidates=rejected_candidates,
         selection_log=selection_log,
@@ -480,6 +493,7 @@ def _select_referential(
     table_order.extend(table for table in schema.table_names if table not in table_order)
 
     selected: dict[str, set[Any]] = {table: set() for table in schema.table_names}
+    selected_total = 0
     selection_log: list[str] = [f"Referential baseline with seed={seed}"]
     rejected_candidates = 0
     total_closure_additions = 0
@@ -495,18 +509,19 @@ def _select_referential(
             if pk_value in selected.get(table_name, set()):
                 continue
             closure_rows = _candidate_closure(
-                graph, engine, table_name, pk_value, selected, budget - _selection_total(selected)
+                graph, engine, table_name, pk_value, selected, budget - selected_total
             )
             additional_rows = _incremental_row_cost(selected, closure_rows)
-            if _selection_total(selected) + additional_rows <= budget:
+            if selected_total + additional_rows <= budget:
                 _merge_closure(selected, closure_rows)
+                selected_total += additional_rows
                 total_closure_additions += max(0, additional_rows - 1)
                 _record_decision(
                     selection_log,
                     f"Added {table_name}.{pk_value}: +{additional_rows} rows, "
-                    f"total={_selection_total(selected)}",
+                    f"total={selected_total}",
                 )
-                if _selection_total(selected) >= budget:
+                if selected_total >= budget:
                     break
             else:
                 rejected_candidates += 1
@@ -520,11 +535,11 @@ def _select_referential(
                     "selected %d/%d budget rows",
                     candidate_index,
                     table_name,
-                    _selection_total(selected),
+                    selected_total,
                     budget,
                 )
 
-        if _selection_total(selected) >= budget:
+        if selected_total >= budget:
             break
 
     return SelectionResult(
@@ -534,7 +549,7 @@ def _select_referential(
         selected_rows={
             table: _stable_pk_values(list(values)) for table, values in selected.items() if values
         },
-        total_selected=_selection_total(selected),
+        total_selected=selected_total,
         closure_additions=total_closure_additions,
         rejected_candidates=rejected_candidates,
         selection_log=selection_log,
@@ -548,6 +563,7 @@ def _select_workload_aware(
     engine: Engine | dict[str, Any] | None,
     budget: int,
     seed: int,
+    priority_queries: tuple[str, ...] = (),
 ) -> SelectionResult:
     """
     Proposed method: SafeSliceSQL workload-aware greedy selection.
@@ -557,9 +573,12 @@ def _select_workload_aware(
     """
     graph = _ensure_graph(schema, graph)
     selected: dict[str, set[Any]] = {table: set() for table in schema.table_names}
+    selected_total = 0
     selection_log: list[str] = [f"Workload-aware selector with seed={seed}"]
 
     require_usable_workload(workload, for_selection=True)
+    if budget == 0:
+        return SelectionResult("workload-aware", seed, budget, {}, selection_log=selection_log)
 
     table_weights: dict[str, float] = {}
     for query in workload.queries:
@@ -583,6 +602,9 @@ def _select_workload_aware(
 
     witnesses = []
     usable = [q for q in workload.queries if q.is_supported and not q.analysis_error]
+    if priority_queries:
+        priority = set(priority_queries)
+        usable.sort(key=lambda query: query.query_id not in priority)
     for query in usable:
         witnesses.append(
             query_witnesses(query, schema, engine, min(1000, max(1, budget // max(1, len(usable)))))
@@ -590,28 +612,45 @@ def _select_workload_aware(
     # Give every declared query an opportunity before consuming its remaining witnesses.
     total_closure_additions = 0
     rejected_candidates = 0
-    for offset in range(max((len(rows) for rows in witnesses), default=0)):
-        for rows in witnesses:
-            if offset >= len(rows) or _selection_total(selected) >= budget:
-                continue
-            witness = rows[offset]
+    witness_order = (
+        rows[offset]
+        for offset in range(max((len(rows) for rows in witnesses), default=0))
+        for rows in witnesses
+        if offset < len(rows)
+    )
+    while selected_total < budget:
+        batch = list(islice(witness_order, WITNESS_PREFETCH_SIZE))
+        if not batch:
+            break
+        if hasattr(engine, "connect"):
+            pending: dict[str, set[Any]] = {}
+            for witness in batch:
+                for table_name, keys in witness.items():
+                    pending.setdefault(table_name, set()).update(keys - selected[table_name])
+            prime_foreign_key_cache(
+                graph, engine, {name: list(keys) for name, keys in pending.items()}
+            )
+        for witness in batch:
+            if selected_total >= budget:
+                break
             closure = compute_closure(
                 graph,
                 witness,
                 engine=engine,
                 satisfied=selected,
-                stop_after=budget - _selection_total(selected),
+                stop_after=budget - selected_total,
             )
             cost = _incremental_row_cost(selected, closure.selected_rows)
-            if _selection_total(selected) + cost <= budget:
+            if selected_total + cost <= budget:
                 _merge_closure(selected, closure.selected_rows)
+                selected_total += cost
                 total_closure_additions += max(0, cost - sum(map(len, witness.values())))
                 _record_decision(selection_log, f"Accepted query witness: +{cost} rows")
             else:
                 rejected_candidates += 1
 
     candidate_rows = _candidate_rows_by_table(
-        schema, engine, budget if _selection_total(selected) < budget else 0, seed
+        schema, engine, budget if selected_total < budget else 0, seed
     )
     prime_foreign_key_cache(graph, engine, candidate_rows)
     rng = random.Random(seed)
@@ -629,31 +668,41 @@ def _select_workload_aware(
                     table_name,
                 )
     rng.shuffle(scored_candidates)
-    scored_candidates.sort(key=lambda candidate: candidate[0], reverse=True)
+    priority_groups: dict[float, list[tuple[float, str, Any]]] = {}
+    for candidate in scored_candidates:
+        priority_groups.setdefault(candidate[0], []).append(candidate)
+    candidate_count = len(scored_candidates)
+    scored_candidates.clear()
     candidate_rows.clear()
 
     # Table priority fills unused space after witnesses; charge only new dependencies.
     for candidate_index, (score, table_name, pk_value) in enumerate(
-        scored_candidates,
+        (
+            candidate
+            for weight in sorted(priority_groups, reverse=True)
+            for candidate in priority_groups[weight]
+        ),
         start=1,
     ):
-        if _selection_total(selected) >= budget:
+        checkpoint()
+        if selected_total >= budget:
             break
         if pk_value in selected.get(table_name, set()):
             continue
         closure_rows = _candidate_closure(
-            graph, engine, table_name, pk_value, selected, budget - _selection_total(selected)
+            graph, engine, table_name, pk_value, selected, budget - selected_total
         )
         additional_rows = _incremental_row_cost(selected, closure_rows)
         if additional_rows == 0:
             continue
-        if _selection_total(selected) + additional_rows <= budget:
+        if selected_total + additional_rows <= budget:
             _merge_closure(selected, closure_rows)
+            selected_total += additional_rows
             total_closure_additions += max(0, additional_rows - 1)
             _record_decision(
                 selection_log,
                 f"Selected {table_name}.{pk_value}: score={score:.3f}, "
-                f"added={additional_rows}, total_rows={_selection_total(selected)}",
+                f"added={additional_rows}, total_rows={selected_total}",
             )
         else:
             rejected_candidates += 1
@@ -665,8 +714,8 @@ def _select_workload_aware(
             logger.info(
                 "Workload-aware evaluated %d/%d scored candidates; selected %d/%d budget rows",
                 candidate_index,
-                len(scored_candidates),
-                _selection_total(selected),
+                candidate_count,
+                selected_total,
                 budget,
             )
 
@@ -677,7 +726,7 @@ def _select_workload_aware(
         selected_rows={
             table: _stable_pk_values(list(values)) for table, values in selected.items() if values
         },
-        total_selected=_selection_total(selected),
+        total_selected=selected_total,
         closure_additions=total_closure_additions,
         rejected_candidates=rejected_candidates,
         selection_log=selection_log,

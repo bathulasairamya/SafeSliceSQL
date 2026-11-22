@@ -31,9 +31,13 @@ def capture_source_snapshot(engine: sa.Engine) -> SourceSnapshot:
     total_rows = 0
     with engine.connect() as connection:
         inspector = sa.inspect(connection)
-        for table in sorted(inspector.get_table_names()):
+        table_names = sorted(inspector.get_table_names())
+        cap(len(table_names), "max_tables")
+        for table in table_names:
+            columns = inspector.get_columns(table)
+            cap(len(columns), "max_columns")
             schema = {
-                "columns": inspector.get_columns(table),
+                "columns": columns,
                 "pk": inspector.get_pk_constraint(table),
                 "fks": inspector.get_foreign_keys(table),
                 "unique": inspector.get_unique_constraints(table),

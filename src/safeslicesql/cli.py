@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,7 @@ import typer
 from safeslicesql.acceptance import AcceptancePolicy
 from safeslicesql.commands import bounded_command
 from safeslicesql.config import load_config, load_logging_settings
+from safeslicesql.connection_scope import source_transaction
 from safeslicesql.db import (
     create_engine,
     get_source_engine,
@@ -279,9 +281,13 @@ def run(
         raise typer.Exit(code=1)
 
     source_engine = get_source_engine(config)
-    target_engine = None if dry_run else get_target_engine(config)
 
-    try:
+    with ExitStack() as resources:
+        resources.callback(source_engine.dispose)
+        target_engine = None if dry_run else get_target_engine(config)
+        if target_engine is not None:
+            resources.callback(target_engine.dispose)
+
         if not test_connection(source_engine):
             typer.echo(
                 f"[error] Could not connect to source database '{config.source_db.database}' on "
@@ -299,9 +305,22 @@ def run(
             raise typer.Exit(code=1)
 
         # 1. Inspect schema & build dependency graph
+        source_setup_started = time.perf_counter()
         try:
-            schema = inspect_schema(source_engine)
+            source_view = resources.enter_context(source_transaction(source_engine))
+            if dry_run:
+                schema = inspect_schema(source_view)
+                source_view.verified_row_counts = {
+                    name: table.row_count for name, table in schema.tables.items()
+                }
+            else:
+                initial_source_snapshot = capture_source_snapshot(source_view)
+                source_view.verified_snapshot = initial_source_snapshot
+                schema = inspect_schema(
+                    source_view, row_counts=dict(initial_source_snapshot.table_counts)
+                )
             graph = build_dependency_graph(schema)
+            source_setup_elapsed = time.perf_counter() - source_setup_started
         except Exception as exc:
             typer.echo(f"[error] Schema inspection failed: {safe_error(exc)}", err=True)
             raise typer.Exit(code=1)
@@ -321,8 +340,6 @@ def run(
             budget,
             budget_percent,
         )
-
-        initial_source_snapshot = capture_source_snapshot(source_engine)
 
         # 3. Workload Analysis
         workload_path = Path(workload)
@@ -345,7 +362,7 @@ def run(
 
         try:
             workload_analysis = analyze_workload(
-                workload_path, engine=source_engine, evaluate_source=False
+                workload_path, engine=source_view, evaluate_source=False
             )
             require_usable_workload(workload_analysis, for_selection=method == "workload-aware")
             logger.info(
@@ -363,10 +380,11 @@ def run(
                     schema=schema,
                     workload=workload_analysis,
                     graph=graph,
-                    engine=source_engine,
+                    engine=source_view,
                     budget=budget,
                     method=method,
                     seed=seed,
+                    priority_queries=tuple(required_query),
                 )
             except Exception as exc:
                 typer.echo(f"[error] Row selection failed: {safe_error(exc)}", err=True)
@@ -384,7 +402,7 @@ def run(
             "validation": print_validation_summary,
         }
         run_result = run_pipeline(
-            source_engine=source_engine,
+            source_engine=source_view,
             target_engine=target_engine,
             schema=schema,
             graph=graph,
@@ -401,6 +419,7 @@ def run(
                 min_query_survival, min_result_retention, tuple(required_query)
             ),
         )
+        run_result.runtime_preflight += source_setup_elapsed
         csv_path = save_run_results_csv(run_result, output_dir=output_dir)
         typer.echo(f"[run] Results exported to {csv_path}")
         if not run_result.success:
@@ -408,10 +427,6 @@ def run(
             raise typer.Exit(1)
 
         typer.echo("[run] SafeSlice completed successfully. Validated rows committed to the target.")
-    finally:
-        source_engine.dispose()
-        if target_engine is not None:
-            target_engine.dispose()
 
 
 @app.command()

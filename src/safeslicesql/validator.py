@@ -105,14 +105,16 @@ def _stream_query(
     *,
     source: bool,
     group_positions: list[int] | None,
+    primary_keys: dict[str, list[str]],
     expected_columns: tuple[str, ...] | None = None,
 ) -> QueryMeasurement:
     """Stream a query into an indexed temporary store, keeping at most one batch."""
     tables, _ = _extract_tables_and_aliases(sql)
-    inspector = sa.inspect(engine)
-    primary_keys = {
-        table: inspector.get_pk_constraint(table).get("constrained_columns", []) for table in tables
-    }
+    missing_tables = [table for table in tables if table not in primary_keys]
+    if missing_tables:
+        inspector = sa.inspect(engine)
+        for table in missing_tables:
+            primary_keys[table] = inspector.get_pk_constraint(table).get("constrained_columns", [])
     started = time.perf_counter()
     elapsed = comparison_elapsed = 0.0
     with engine.connect() as connection:
@@ -126,7 +128,9 @@ def _stream_query(
                 raise ValueError("Source and target query output columns differ.")
             # Inspect before streaming starts on MySQL: metadata queries cannot
             # run while an unbuffered cursor is active on the same connection.
-            key_positions = _projected_key_positions(sql, columns, primary_keys)
+            key_positions = _projected_key_positions(
+                sql, columns, {table: primary_keys[table] for table in tables}
+            )
             if not key_positions and group_positions:
                 key_positions = group_positions  # Explicit GROUP BY defines output identities.
             batch = []
@@ -217,7 +221,6 @@ def _validate_subset(
     for table_name in target_tables:
         actual_rows += _row_count(target_engine, table_name)
 
-    source_total = sum(_row_count(source_engine, table) for table in source_tables)
     budget_compliant = actual_rows <= budget_limit
     schema_compatible = set(source_tables) == set(target_tables)
 
@@ -238,11 +241,11 @@ def _validate_subset(
             quoted_cols = ", ".join(_quote_ident(c) for c in pk_cols)
             check_pk_sql = (
                 f"SELECT {quoted_cols}, COUNT(*) FROM {_quote_ident(table_name)} "
-                f"GROUP BY {quoted_cols} HAVING COUNT(*) > 1"
+                f"GROUP BY {quoted_cols} HAVING COUNT(*) > 1 LIMIT 1"
             )
             with target_engine.connect() as conn:
                 try:
-                    dups = conn.execute(sa.text(check_pk_sql)).fetchall()
+                    dups = conn.execute(sa.text(check_pk_sql)).first()
                     if dups:
                         pk_unique = False
                 except Exception as exc:
@@ -307,8 +310,10 @@ def _validate_subset(
     source_unchanged = None
     if initial_source_snapshot is not None:
         source_unchanged = capture_source_snapshot(source_engine) == initial_source_snapshot
-    elif initial_source_row_count is not None and source_total != initial_source_row_count:
-        source_unchanged = False
+    elif initial_source_row_count is not None:
+        source_total = sum(_row_count(source_engine, table) for table in source_tables)
+        if source_total != initial_source_row_count:
+            source_unchanged = False
 
     report = ValidationReport(
         pk_unique=pk_unique,
@@ -351,6 +356,8 @@ def evaluate_workload(
 ) -> WorkloadReport:
     """Evaluate supported queries; execution failures remain failed measurements."""
     results = []
+    source_keys: dict[str, list[str]] = {}
+    target_keys: dict[str, list[str]] = {}
     for query in workload.queries:
         result = QueryResult(query_id=query.query_id, query_text=query.raw_sql)
         if not query.is_supported:
@@ -370,7 +377,12 @@ def evaluate_workload(
                 _, positions = _group_features(query.raw_sql, aliases, tables)
             with temporary_result_store() as store:
                 source = _stream_query(
-                    source_engine, query.raw_sql, store, source=True, group_positions=positions
+                    source_engine,
+                    query.raw_sql,
+                    store,
+                    source=True,
+                    group_positions=positions,
+                    primary_keys=source_keys,
                 )
                 result.execution_time_source = source.elapsed
                 result.comparison_time_source = source.comparison_elapsed
@@ -383,6 +395,7 @@ def evaluate_workload(
                     store,
                     source=False,
                     group_positions=positions,
+                    primary_keys=target_keys,
                     expected_columns=source.columns,
                 )
                 result.execution_time_target = target.elapsed

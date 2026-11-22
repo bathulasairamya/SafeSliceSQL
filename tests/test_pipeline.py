@@ -44,6 +44,7 @@ def test_shared_runner_preserves_stage_order_and_validates_copy(options):
     completed = []
     result = pipeline.run_pipeline(**options, on_stage=lambda name, _: completed.append(name))
     assert result.success, result.error_message
+    assert result.runtime_preflight > 0
     assert completed == ["selection", "generation", "workload", "validation"]
     assert result.validation.source_unchanged is True
     assert result.validation.actual_rows == 1
@@ -74,3 +75,17 @@ def test_workload_exception_still_checks_source_and_fails_run(options, monkeypat
     assert "query failed" in result.error_message
     assert result.validation.is_valid
     assert result.validation.source_unchanged is True
+
+
+def test_failed_preflight_records_cost_without_touching_target(options, monkeypatch):
+    monkeypatch.setattr(
+        pipeline, "capture_source_snapshot", Mock(side_effect=RuntimeError("snapshot failed"))
+    )
+    materialize = Mock(side_effect=AssertionError("preflight failure must not write"))
+    monkeypatch.setattr(pipeline, "materialize_subset", materialize)
+    result = pipeline.run_pipeline(**options)
+    assert not result.success
+    assert "snapshot failed" in result.error_message
+    assert result.runtime_preflight > 0
+    assert result.runtime_selection == 0
+    materialize.assert_not_called()

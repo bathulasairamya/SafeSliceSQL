@@ -84,7 +84,12 @@ def _create_copy(
         engines.append(bounded_engine(prepared.source.url, read_only=True))
         engines.append(bounded_engine(prepared.target.url))
         progress("Selecting records, creating the copy, and checking the results…")
-        results = run_benchmark(path, *engines, target_database_name=prepared.target.database)
+        results = run_benchmark(
+            path,
+            *engines,
+            target_database_name=prepared.target.database,
+            export_plots=request.compare,
+        )
         outcome = CopyOutcome(request, prepared, results, output)
         save_copy_summary(outcome)
         return outcome

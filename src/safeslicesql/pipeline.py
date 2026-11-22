@@ -110,6 +110,8 @@ def run_pipeline(
         if errors:
             raise ValueError("; ".join(errors))
 
+    preflight_started = time.perf_counter()
+    preflight_complete = False
     try:
         with source_transaction(source_engine) as source_view:
             # Establish the read view before any selection or target changes.
@@ -117,13 +119,18 @@ def run_pipeline(
                 raise ValueError(
                     "Source changed since the baseline; restart with a fresh baseline."
                 )
-            if initial_source_snapshot.row_count != schema.total_row_count:
+            expected_counts = {name: table.row_count for name, table in schema.tables.items()}
+            snapshot_counts = dict(initial_source_snapshot.table_counts)
+            if (
+                initial_source_snapshot.row_count != schema.total_row_count
+                or (snapshot_counts and snapshot_counts != expected_counts)
+            ):
                 raise ValueError(
                     "Source row counts changed during setup; restart with a fresh baseline."
                 )
-            source_view.verified_row_counts = dict(initial_source_snapshot.table_counts) or {
-                name: table.row_count for name, table in schema.tables.items()
-            }
+            source_view.verified_row_counts = snapshot_counts or expected_counts
+            result.runtime_preflight = time.perf_counter() - preflight_started
+            preflight_complete = True
             selection = stage(
                 "selection",
                 lambda: select_rows(
@@ -134,6 +141,7 @@ def run_pipeline(
                     budget=budget,
                     method=method,
                     seed=seed,
+                    priority_queries=tuple(acceptance.required_queries) if acceptance else (),
                 ),
             )
             started = time.perf_counter()
@@ -164,5 +172,8 @@ def run_pipeline(
         result.success = result.validation is not None and result.validation.is_valid and not errors
     except Exception as exc:
         errors.append(safe_error(exc))
+    finally:
+        if not preflight_complete:
+            result.runtime_preflight = time.perf_counter() - preflight_started
     result.error_message = "; ".join(error for error in errors if error)
     return result

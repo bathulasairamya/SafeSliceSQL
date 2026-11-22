@@ -720,12 +720,16 @@ class Desktop:
                 else "Could not verify",
             ),
             (
-                "Demonstration queries returning results",
+                "Workload queries returning results",
                 f"{sum(q.survived for q in run.workload.per_query_results)} of {run.workload.survival_denominator}"
                 if run.workload
                 else "Not evaluated",
             ),
         ]
+        if run.workload and run.workload.excluded_queries:
+            checks.append(
+                ("Unsupported workload queries", f"{run.workload.excluded_queries:,} excluded")
+            )
         checks.append(
             (
                 "Query quality requirements",

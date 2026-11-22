@@ -92,6 +92,7 @@ def test_save_run_results_csv(tmp_path: Path):
         generation=generation,
         validation=validation,
         workload=workload,
+        runtime_preflight=0.25,
         runtime_selection=0.1,
         runtime_materialization=0.2,
         runtime_validation=0.05,
@@ -115,6 +116,8 @@ def test_save_run_results_csv(tmp_path: Path):
         assert row["total_selected"] == "3"
         assert row["total_rows_inserted"] == "3"
         assert row["is_valid"] == "True"
+        assert float(row["runtime_preflight"]) == 0.25
+        assert abs(float(row["total_runtime"]) - 0.75) < 1e-9
 
     # Verify queries breakdown CSV
     queries_path = tmp_path / "queries_test_run_01.csv"

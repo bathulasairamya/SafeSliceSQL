@@ -272,6 +272,7 @@ class BenchmarkRunResult:
     success: bool = False
     error_message: str = ""
     acceptance: AcceptanceReport | None = None
+    runtime_preflight: float = 0.0
 
 
 @dataclass

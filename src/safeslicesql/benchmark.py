@@ -133,6 +133,8 @@ def run_benchmark(
     source_engine: Engine | None = None,
     target_engine: Engine | None = None,
     target_database_name: str | None = None,
+    *,
+    export_plots: bool = True,
 ) -> BenchmarkResults:
     """
     Execute the benchmark matrix defined in a YAML configuration file.
@@ -165,7 +167,8 @@ def run_benchmark(
 
     raw_dir.mkdir(parents=True, exist_ok=True)
     summary_dir.mkdir(parents=True, exist_ok=True)
-    plots_dir.mkdir(parents=True, exist_ok=True)
+    if export_plots:
+        plots_dir.mkdir(parents=True, exist_ok=True)
 
     # Establish database connections if not provided
     created_engines = False
@@ -203,16 +206,17 @@ def run_benchmark(
         console.print(f"Workload: [bold]{workload_path}[/bold]")
 
         with source_transaction(source_engine) as snapshot_source:
-            # Introspect schema and build dependency graph once
-            schema = inspect_schema(snapshot_source)
+            initial_source_snapshot = capture_source_snapshot(snapshot_source)
+            snapshot_source.verified_snapshot = initial_source_snapshot
+            schema = inspect_schema(
+                snapshot_source, row_counts=dict(initial_source_snapshot.table_counts)
+            )
             graph = build_dependency_graph(schema)
             total_source_rows = schema.total_row_count
             console.print(
                 f"Source Database: [bold]{total_source_rows:,}[/bold] total rows across [bold]{len(schema.table_names)}[/bold] tables."
             )
 
-            initial_source_snapshot = capture_source_snapshot(snapshot_source)
-            snapshot_source.verified_snapshot = initial_source_snapshot
             if str(workload_path) == "auto":
                 from safeslicesql.automatic_workload import save_automatic_workload
 
@@ -285,7 +289,7 @@ def run_benchmark(
             all_runs=all_runs,
             raw_dir=raw_dir,
             summary_dir=summary_dir,
-            plots_dir=plots_dir,
+            plots_dir=plots_dir if export_plots else None,
             config_path=str(config_path),
         )
 
@@ -301,7 +305,7 @@ def _compile_and_save_summaries(
     all_runs: list[BenchmarkRunResult],
     raw_dir: Path,
     summary_dir: Path,
-    plots_dir: Path,
+    plots_dir: Path | None,
     config_path: str,
 ) -> BenchmarkResults:
     """Aggregate individual runs, generate summary CSV and markdown, and produce plots."""
@@ -312,7 +316,8 @@ def _compile_and_save_summaries(
         val = r.validation
         wl = r.workload
         total_runtime = (
-            r.runtime_selection
+            r.runtime_preflight
+            + r.runtime_selection
             + r.runtime_materialization
             + r.runtime_validation
             + r.runtime_workload_eval
@@ -350,6 +355,7 @@ def _compile_and_save_summaries(
                 "overall_aggregate_retention": wl.overall_aggregate_retention
                 if wl and wl.supported_queries
                 else None,
+                "runtime_preflight": r.runtime_preflight,
                 "runtime_selection": r.runtime_selection,
                 "runtime_materialization": r.runtime_materialization,
                 "runtime_validation": r.runtime_validation,
@@ -410,12 +416,13 @@ def _compile_and_save_summaries(
         _write_markdown_summary(summary_df, md_path)
 
         # Generate evaluation plots
-        try:
-            from safeslicesql.plots import generate_all_plots
+        if plots_dir is not None:
+            try:
+                from safeslicesql.plots import generate_all_plots
 
-            generate_all_plots(summary_csv_path, output_dir=plots_dir)
-        except Exception as exc:
-            logger.warning("Could not generate plots: %s", exc)
+                generate_all_plots(summary_csv_path, output_dir=plots_dir)
+            except Exception as exc:
+                logger.warning("Could not generate plots: %s", exc)
 
         # Print console comparison table
         _print_console_summary_table(summary_df)

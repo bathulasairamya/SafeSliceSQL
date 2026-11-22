@@ -11,6 +11,7 @@ cycles, etc.) per the supported scope definition.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 import sqlalchemy as sa
 from sqlalchemy import Engine
@@ -27,7 +28,9 @@ from safeslicesql.types import (
 logger = logging.getLogger("safeslicesql.schema_analyzer")
 
 
-def inspect_schema(engine: Engine) -> SchemaMetadata:
+def inspect_schema(
+    engine: Engine, *, row_counts: Mapping[str, int] | None = None
+) -> SchemaMetadata:
     """
     Introspect the source database and return structured metadata.
 
@@ -35,7 +38,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
     - Tables, columns, data types, nullability
     - Single-column and composite primary keys
     - Single-column foreign keys with parent/child direction
-    - Approximate or exact row counts per table
+    - Exact row counts per table, optionally supplied from the same read view
 
     Detects and reports as unsupported:
     - Composite foreign keys (flagged in unsupported_features)
@@ -63,17 +66,20 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
         "Discovered %d tables in database '%s': %s", len(table_names), db_name, table_names
     )
 
-    # Fetch exact row counts using a single connection
-    table_row_counts: dict[str, int] = {}
-    with engine.connect() as conn:
-        for table_name in table_names:
-            try:
-                res = conn.execute(sa.text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}"))
-                table_row_counts[table_name] = int(res.scalar_one())
-            except Exception as exc:
-                raise RuntimeError(f"Could not count rows in table '{table_name}'") from exc
+    if row_counts is None:
+        counted = {}
+        with engine.connect() as conn:
+            for table_name in table_names:
+                try:
+                    result = conn.execute(sa.text(f"SELECT COUNT(*) FROM {_quote_ident(table_name)}"))
+                    counted[table_name] = int(result.scalar_one())
+                except Exception as exc:
+                    raise RuntimeError(f"Could not count rows in table '{table_name}'") from exc
+        row_counts = counted
+    elif set(row_counts) != set(table_names):
+        raise ValueError("Source tables changed during setup; restart with a fresh source view.")
 
-    cap(sum(table_row_counts.values()), "max_source_rows")
+    cap(sum(row_counts.values()), "max_source_rows")
     for table_name in table_names:
         logger.debug("Introspecting table: %s", table_name)
 
@@ -152,7 +158,7 @@ def inspect_schema(engine: Engine) -> SchemaMetadata:
         except Exception as exc:
             raise RuntimeError(f"Could not inspect foreign keys for table '{table_name}'") from exc
 
-        row_count = table_row_counts[table_name]
+        row_count = row_counts[table_name]
 
         table_meta = TableMetadata(
             name=table_name,

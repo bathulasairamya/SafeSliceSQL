@@ -30,10 +30,20 @@ class ResultStore:
 
     def add_batch(self, rows: list[tuple[int, str, int, int]]) -> None:
         checkpoint()
+        # Collapse repeated tuples within the bounded input batch. Preserve exact
+        # multiplicities while avoiding repeated index writes for duplicate results.
+        counts: dict[tuple[int, str], list[int]] = {}
+        for kind, value, source, target in rows:
+            key = (kind, value)
+            if key in counts:
+                counts[key][0] += source
+                counts[key][1] += target
+            else:
+                counts[key] = [source, target]
         self.connection.executemany(
             "INSERT INTO results VALUES(?,?,?,?) ON CONFLICT(kind,value) DO UPDATE SET "
             "source=source+excluded.source, target=target+excluded.target",
-            rows,
+            ((kind, value, source, target) for (kind, value), (source, target) in counts.items()),
         )
 
     def retention(self, kind: int, *, multiset: bool = False) -> float:

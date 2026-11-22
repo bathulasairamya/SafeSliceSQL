@@ -58,7 +58,8 @@ def save_run_results_csv(
     wl = run_result.workload
 
     total_runtime = (
-        run_result.runtime_selection
+        run_result.runtime_preflight
+        + run_result.runtime_selection
         + run_result.runtime_materialization
         + run_result.runtime_validation
         + run_result.runtime_workload_eval
@@ -96,6 +97,7 @@ def save_run_results_csv(
         "overall_key_retention": wl.overall_key_retention if wl else 0.0,
         "overall_result_retention": wl.overall_result_retention if wl else 0.0,
         "overall_aggregate_retention": wl.overall_aggregate_retention if wl else 0.0,
+        "runtime_preflight": run_result.runtime_preflight,
         "runtime_selection": run_result.runtime_selection,
         "runtime_materialization": run_result.runtime_materialization,
         "runtime_validation": run_result.runtime_validation,
