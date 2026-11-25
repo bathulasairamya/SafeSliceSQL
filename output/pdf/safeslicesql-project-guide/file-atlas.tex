@@ -1,0 +1,621 @@
+\chapter{Application files: plain language and technical atlas}
+
+\begingroup\setlength{\parskip}{4pt}
+
+Every application module is described below. Paths are relative to the repository root. The function appendix gives exact signatures from the inspected source; private helpers are included there too.
+
+\Needspace{10\baselineskip}
+
+\section{\_\_init\_\_.py}
+
+\textbf{Role:} Package identity\quad\textbf{Size:} 35 source lines.
+
+\plain{Identifies the installed application and exposes its main library operations.}
+
+\technical{Defines version 0.1.0 and re-exports the public configuration, schema, graph, selection, materialization, validation, workload and source-snapshot interfaces through \_\_all\_\_. It is not the launcher or pipeline implementation.}
+
+\textbf{Reads/calls project modules:} \path{config.py}, \path{dependency_graph.py}, \path{sampler.py}, \path{schema_analyzer.py}, \path{source_snapshot.py}, \path{subset_generator.py}, \path{validator.py}, \path{workload_analyzer.py}.
+
+\Needspace{10\baselineskip}
+
+\section{desktop.py}
+
+\textbf{Role:} Desktop entry and controls\quad\textbf{Size:} 1011 source lines.
+
+\plain{Provides the window where you choose data, set the copy size, start work, cancel, and inspect results.}
+
+\technical{The Tkinter Desktop class manages a worker thread, a queue polled by the UI, input preview, quality settings, history and verification actions. main() loads configuration and starts the Tk event loop; expensive operations are delegated to services.}
+
+\textbf{Reads/calls project modules:} \path{config.py}, \path{copy_evidence.py}, \path{desktop_service.py}, \path{input_picker.py}, \path{input_preview.py}, \path{jobs.py}, \path{logging_config.py}, \path{record_browser.py}, \path{result_views.py}, \path{runtime.py}, \path{sampler.py}, \path{saved_results.py}, \path{security.py}, \path{user_errors.py}.
+
+\textbf{Primary entry points/data:} \path{Desktop}, \path{main}.
+
+\Needspace{10\baselineskip}
+
+\section{desktop\_service.py}
+
+\textbf{Role:} Desktop-to-core adapter\quad\textbf{Size:} 129 source lines.
+
+\plain{Turns choices in the window into a real, checked copy job.}
+
+\technical{CopyRequest validates input kind, percentage, method, workload and acceptance. \path{create_copy()} establishes journal and runtime contexts; \_\path{create_copy()} prepares data, writes YAML, opens engines, invokes \path{run_benchmark()}, saves the summary, and disposes engines.}
+
+\textbf{Reads/calls project modules:} \path{acceptance.py}, \path{benchmark.py}, \path{config.py}, \path{dataset_input.py}, \path{experiment_config.py}, \path{jobs.py}, \path{runtime.py}, \path{sampler.py}, \path{saved_results.py}, \path{types.py}.
+
+\textbf{Primary entry points/data:} \path{CopyRequest}, \path{CopyOutcome}, \path{create_copy}.
+
+\Needspace{10\baselineskip}
+
+\section{cli.py}
+
+\textbf{Role:} Command-line entry\quad\textbf{Size:} 741 source lines.
+
+\plain{Lets you inspect, slice, validate, benchmark, self-test and manage jobs from a terminal.}
+
+\technical{Typer app registers commands. run() distinguishes selection-only dry runs from target-changing runs, establishes the source read view, inspects schema, parses SQL and invokes \path{run_pipeline()}. validate() can evaluate a workload but lacks a historical source fingerprint unless supplied through the library.}
+
+\textbf{Reads/calls project modules:} \path{acceptance.py}, \path{automatic_workload.py}, \path{benchmark.py}, \path{commands.py}, \path{config.py}, \path{connection_scope.py}, \path{db.py}, \path{demo.py}, \path{dependency_graph.py}, \path{desktop.py}, \path{jobs.py}, \path{logging_config.py}, \path{pipeline.py}, \path{reporting.py}, \path{runtime.py}, \path{sampler.py}, \path{scale_check.py}, \path{schema_analyzer.py}, \path{security.py}, \path{source_snapshot.py}, \path{synthetic.py}, \path{validator.py}, \path{workload_analyzer.py}.
+
+\textbf{Primary entry points/data:} \path{inspect}, \path{run}, \path{validate}, \path{benchmark}, \path{selftest}, \path{scalecheck}, \path{jobs}, \path{store_password}, \path{desktop}, \path{demo}.
+
+\Needspace{10\baselineskip}
+
+\section{demo.py}
+
+\textbf{Role:} Terminal presentation menu\quad\textbf{Size:} 374 source lines.
+
+\plain{Offers a numbered menu around the same application so a demonstration needs fewer typed commands.}
+
+\technical{DemoSettings carries source, target, workload, budget, method and seed. The menu calls existing CLI entry points using argument lists rather than shell interpolation, prepares unfamiliar input and creates benchmark YAML.}
+
+\textbf{Reads/calls project modules:} \path{config.py}, \path{dataset_input.py}, \path{experiment_config.py}, \path{input_picker.py}, \path{sampler.py}, \path{security.py}.
+
+\textbf{Primary entry points/data:} \path{DemoSettings}, \path{interactive_demo}.
+
+\Needspace{10\baselineskip}
+
+\section{commands.py}
+
+\textbf{Role:} CLI operation wrapper\quad\textbf{Size:} 39 source lines.
+
+\plain{Gives terminal actions a consistent job record, limits and stop behavior.}
+
+\technical{\path{bounded_command} decorates commands with Limits.\path{from_env()}, journal() and \path{execution_context()}. Cancellation/keyboard interrupts exit 130, cooperative limit stops exit 124, and invalid values exit 1.}
+
+\textbf{Reads/calls project modules:} \path{config.py}, \path{jobs.py}, \path{runtime.py}, \path{security.py}.
+
+\textbf{Primary entry points/data:} \path{bounded_command}.
+
+\Needspace{10\baselineskip}
+
+\section{config.py}
+
+\textbf{Role:} Configuration and URLs\quad\textbf{Size:} 212 source lines.
+
+\plain{Reads connection details and rejects incomplete or conflicting settings.}
+
+\technical{DatabaseConfig exposes a SQLAlchemy URL object and masks password representation. AppConfig separates source and target. \path{load_config()} loads the project-relative environment and delegates secret resolution; \path{require_target}=False supports source-only actions.}
+
+\textbf{Reads/calls project modules:} \path{security.py}.
+
+\textbf{Primary entry points/data:} \path{DatabaseConfig}, \path{AppConfig}, \path{load_logging_settings}, \path{load_config}.
+
+\Needspace{10\baselineskip}
+
+\section{db.py}
+
+\textbf{Role:} Connections and identity\quad\textbf{Size:} 211 source lines.
+
+\plain{Connects to the correct servers and prevents the original database from being used as the output.}
+
+\technical{Builds engines, tests connections, safely quotes identifiers and counts rows. \path{assert_distinct_databases()} checks actual connected identity; MySQL uses server UUID plus schema, so hostname aliases do not bypass protection.}
+
+\textbf{Reads/calls project modules:} \path{config.py}, \path{runtime.py}.
+
+\textbf{Primary entry points/data:} \path{assert_distinct_databases}, \path{create_engine}, \path{get_source_engine}, \path{get_target_engine}, \path{test_connection}, \path{quote_ident}, \path{get_row_count}.
+
+\Needspace{10\baselineskip}
+
+\section{connection\_scope.py}
+
+\textbf{Role:} Shared source read view\quad\textbf{Size:} 50 source lines.
+
+\plain{Keeps all stages looking at the same version of the original data.}
+
+\technical{ConnectionScope borrows a SQLAlchemy connection without closing its transaction when helpers exit. \path{source_transaction()} establishes a repeatable-read MySQL transaction or reuses an existing scope. Cached verified snapshots/counts travel with the scope.}
+
+\textbf{Primary entry points/data:} \path{ConnectionScope}, \path{inspect_scope}, \path{source_transaction}.
+
+\Needspace{10\baselineskip}
+
+\section{security.py}
+
+\textbf{Role:} Secrets and safe errors\quad\textbf{Size:} 80 source lines.
+
+\plain{Keeps passwords out of ordinary messages and can read them from a protected file or OS vault.}
+
+\technical{credential() chooses a configured file or approved native keyring backend, otherwise the environment password. Explicit unreadable references fail closed. \path{remember_secret()}, redact() and \path{safe_error()} remove registered secrets and SQL/bound-value details from public errors.}
+
+\textbf{Primary entry points/data:} \path{os_vault}, \path{remember_secret}, \path{redact}, \path{safe_error}, \path{credential}.
+
+\Needspace{10\baselineskip}
+
+\section{logging\_config.py}
+
+\textbf{Role:} Diagnostics\quad\textbf{Size:} 129 source lines.
+
+\plain{Writes useful progress and debug information without displaying passwords.}
+
+\technical{Installs project logger levels, a concise console handler, a rotating diagnostic file and RedactionFilter. Logs are diagnostics, not experimental evidence by themselves.}
+
+\textbf{Reads/calls project modules:} \path{security.py}.
+
+\textbf{Primary entry points/data:} \path{RedactionFilter}, \path{ConsoleHandler}, \path{setup_logging}.
+
+\Needspace{10\baselineskip}
+
+\section{input\_picker.py}
+
+\textbf{Role:} Input selection\quad\textbf{Size:} 43 source lines.
+
+\plain{Shows the file chooser or available user databases.}
+
+\technical{\path{available_databases()} filters system schemas and disposes its connection. \path{pick_input()} handles Tk file/folder dialogs and cancellation without preparing or changing a dataset.}
+
+\textbf{Reads/calls project modules:} \path{config.py}, \path{runtime.py}.
+
+\textbf{Primary entry points/data:} \path{available_databases}, \path{pick_input}.
+
+\Needspace{10\baselineskip}
+
+\section{input\_preview.py}
+
+\textbf{Role:} Preview before writes\quad\textbf{Size:} 70 source lines.
+
+\plain{Shows how many rows and columns an input contains before creating databases.}
+
+\technical{\path{preview_input()} uses the same streaming file reader as import or a read-only source engine. InputPreview.\path{row_budget()} mirrors percentage rounding and reports zero for an empty input.}
+
+\textbf{Reads/calls project modules:} \path{dataset_input.py}, \path{runtime.py}, \path{schema_analyzer.py}.
+
+\textbf{Primary entry points/data:} \path{InputPreview}, \path{preview_input}.
+
+\Needspace{10\baselineskip}
+
+\section{dataset\_input.py}
+
+\textbf{Role:} File import and source preparation\quad\textbf{Size:} 274 source lines.
+
+\plain{Makes a private working database for CSV/Excel input, or connects to an already imported MySQL database.}
+
+\technical{\path{iter_input_tables()} supports CSV, CSV folders and XLSX; \_\path{load_table()} preserves cell strings in text/LONGTEXT columns and assigns \_\path{safeslice_id}. \path{prepare_dataset()} creates UUID-named owned schemas, generates workload SQL, writes dataset.json and attempts scoped cleanup on failure.}
+
+\textbf{Reads/calls project modules:} \path{automatic_workload.py}, \path{config.py}, \path{db.py}, \path{jobs.py}, \path{runtime.py}, \path{schema_analyzer.py}, \path{security.py}.
+
+\textbf{Primary entry points/data:} \path{PreparedDataset}, \path{iter_input_tables}, \path{import_files}, \path{prepare_dataset}.
+
+\Needspace{10\baselineskip}
+
+\section{automatic\_workload.py}
+
+\textbf{Role:} Automatic example SQL\quad\textbf{Size:} 83 source lines.
+
+\plain{Creates basic checks using the table and relationship names actually found in your input.}
+
+\technical{\path{generate_workload()} emits projections, COUNT, category/FK groups, inner joins and non-null FK filters. Large table projections are ordered and bounded by min(1000, \path{max_result_rows}). These queries demonstrate structure rather than infer business priorities.}
+
+\textbf{Reads/calls project modules:} \path{db.py}, \path{dependency_graph.py}, \path{runtime.py}, \path{types.py}.
+
+\textbf{Primary entry points/data:} \path{generate_workload}, \path{save_automatic_workload}.
+
+\Needspace{10\baselineskip}
+
+\section{experiment\_config.py}
+
+\textbf{Role:} One YAML writer\quad\textbf{Size:} 36 source lines.
+
+\plain{Saves the choices needed to repeat a desktop or menu experiment.}
+
+\technical{\path{write_experiment_config()} writes method, budget and seed matrices, a workload path, output directories and optional acceptance thresholds. It does not store database passwords.}
+
+\textbf{Primary entry points/data:} \path{write_experiment_config}.
+
+\Needspace{10\baselineskip}
+
+\section{schema\_analyzer.py}
+
+\textbf{Role:} Schema discovery\quad\textbf{Size:} 194 source lines.
+
+\plain{Finds each table, its record identifier, relationships and exact size.}
+
+\technical{\path{inspect_schema()} reflects columns, PK/FK constraints and exact counts or reuses same-view counts. It marks missing PKs, composite FKs and cross-table cycles unsupported and enforces source/table/column limits.}
+
+\textbf{Reads/calls project modules:} \path{db.py}, \path{dependency_graph.py}, \path{runtime.py}, \path{types.py}.
+
+\textbf{Primary entry points/data:} \path{inspect_schema}.
+
+\Needspace{10\baselineskip}
+
+\section{schema\_compatibility.py}
+
+\textbf{Role:} Schema comparison\quad\textbf{Size:} 104 source lines.
+
+\plain{Checks that the smaller database has the same table rules as the original.}
+
+\technical{\path{table_schema_differences()} compares columns including generated definitions, PKs, FK rules, unique/check constraints and indexes by structure rather than constraint names. Reflection failures propagate rather than being treated as a match.}
+
+\textbf{Primary entry points/data:} \path{table_schema_differences}.
+
+\Needspace{10\baselineskip}
+
+\section{dependency\_graph.py}
+
+\textbf{Role:} Relationships and required parents\quad\textbf{Size:} 547 source lines.
+
+\plain{Finds every parent record needed when a particular child is retained.}
+
+\technical{DependencyGraph stores parent-to-child edges, separates self-references and provides topological order. \path{compute_closure()} follows FK values back to actual parent PKs, handles nullable and unique-column references, excludes already-satisfied rows and stops once the remaining budget cannot fit.}
+
+\textbf{Reads/calls project modules:} \path{db.py}, \path{runtime.py}, \path{security.py}, \path{types.py}.
+
+\textbf{Primary entry points/data:} \path{DependencyGraph}, \path{clear_fk_cache}, \path{build_dependency_graph}, \path{prime_foreign_key_cache}, \path{compute_closure}.
+
+\Needspace{10\baselineskip}
+
+\section{sql\_lexer.py}
+
+\textbf{Role:} Safe statement boundaries\quad\textbf{Size:} 97 source lines.
+
+\plain{Recognizes quoted text, comments and statement separators without splitting SQL in the wrong place.}
+
+\technical{tokenize() emits typed tokens; \path{split_statements()} strips ordinary comments while preserving SQL literals/quoted identifiers. Executable comments and unterminated constructs are rejected. This is a small lexer, not a complete SQL grammar or hostile-query sandbox.}
+
+\textbf{Primary entry points/data:} \path{Token}, \path{tokenize}, \path{split_statements}, \path{syntax_only}, \path{identifier}.
+
+\Needspace{10\baselineskip}
+
+\section{workload\_analyzer.py}
+
+\textbf{Role:} Supported query analysis\quad\textbf{Size:} 542 source lines.
+
+\plain{Reads the SQL tests, numbers them Q1, Q2 and so on, and explains unsupported queries.}
+
+\technical{\path{analyze_workload()} extracts tables, aliases, joins, filters, grouping/output lineage and aggregate features. It can stream source result counts, while pipeline setup sets \path{evaluate_source}=False to avoid duplicate execution. Supported SQL execution errors remain failures, not exclusions.}
+
+\textbf{Reads/calls project modules:} \path{runtime.py}, \path{security.py}, \path{sql_lexer.py}.
+
+\textbf{Primary entry points/data:} \path{WorkloadAnalysis}, \path{QueryInfo}, \path{require_usable_workload}, \path{load_workload}, \path{analyze_workload}.
+
+\Needspace{10\baselineskip}
+
+\section{workload\_candidates.py}
+
+\textbf{Role:} Actual query witnesses\quad\textbf{Size:} 66 source lines.
+
+\plain{Finds real rows that satisfy the chosen filters and joins before filling the rest of the copy.}
+
+\technical{\path{query_witnesses()} projects PKs from the original FROM/JOIN/WHERE clauses and orders a bounded sample. GROUP BY/HAVING/ORDER/LIMIT are not solved as group objectives; witnesses for joined rows contain participating table keys.}
+
+\textbf{Reads/calls project modules:} \path{db.py}, \path{runtime.py}, \path{sql_lexer.py}, \path{workload_analyzer.py}.
+
+\textbf{Primary entry points/data:} \path{query_witnesses}.
+
+\Needspace{10\baselineskip}
+
+\section{sampler.py}
+
+\textbf{Role:} Three row selectors\quad\textbf{Size:} 733 source lines.
+
+\plain{Decides which records and required parents can fit in the copy.}
+
+\technical{\path{select_rows()} dispatches random-repair, referential or workload-aware methods. Candidate pooling targets 1.25 times the row budget. Workload-aware selection seeds query witnesses then fills by static table weights, accepting only closures whose incremental cost fits.}
+
+\textbf{Reads/calls project modules:} \path{dependency_graph.py}, \path{runtime.py}, \path{types.py}, \path{workload_analyzer.py}, \path{workload_candidates.py}.
+
+\textbf{Primary entry points/data:} \path{select_rows}.
+
+\Needspace{10\baselineskip}
+
+\section{pipeline.py}
+
+\textbf{Role:} Main orchestrator\quad\textbf{Size:} 179 source lines.
+
+\plain{Runs selection, copying and checking as one coordinated operation.}
+
+\technical{\path{run_pipeline()} obtains the target lease, verifies the source baseline/read view, times stages and passes a \path{before_commit} callback to \path{materialize_subset()}. The callback evaluates workload, validates structure/content budget and applies acceptance; an error rejects the transaction.}
+
+\textbf{Reads/calls project modules:} \path{acceptance.py}, \path{connection_scope.py}, \path{dependency_graph.py}, \path{runtime.py}, \path{sampler.py}, \path{security.py}, \path{source_snapshot.py}, \path{subset_generator.py}, \path{target_lock.py}, \path{types.py}, \path{validator.py}, \path{workload_analyzer.py}.
+
+\textbf{Primary entry points/data:} \path{run_pipeline}.
+
+\Needspace{10\baselineskip}
+
+\section{subset\_generator.py}
+
+\textbf{Role:} Transactional copying\quad\textbf{Size:} 483 source lines.
+
+\plain{Creates the output tables and copies selected records in a relationship-safe order.}
+
+\technical{\path{materialize_subset()} checks identity, selection and schema, creates missing structures, deletes old rows child-first and inserts parent-first in 500-row chunks. It orders self-referencing records, omits generated columns from insert payloads, compares each copied batch and rolls back rejected DML.}
+
+\textbf{Reads/calls project modules:} \path{db.py}, \path{dependency_graph.py}, \path{runtime.py}, \path{schema_compatibility.py}, \path{security.py}, \path{types.py}.
+
+\textbf{Primary entry points/data:} \path{materialize_subset}.
+
+\Needspace{10\baselineskip}
+
+\section{validator.py}
+
+\textbf{Role:} Integrity and query evaluation\quad\textbf{Size:} 454 source lines.
+
+\plain{Checks for broken links, duplicate record IDs, wrong table rules and changes to query answers.}
+
+\technical{\path{validate_subset()} reports PK, FK, schema, budget and source-snapshot evidence. \path{evaluate_workload()} streams source and target results through ResultStore, computes exact multiset/key/group retention, and uses honest denominators for errors and source-empty queries.}
+
+\textbf{Reads/calls project modules:} \path{db.py}, \path{result_store.py}, \path{runtime.py}, \path{schema_compatibility.py}, \path{security.py}, \path{source_snapshot.py}, \path{types.py}, \path{workload_analyzer.py}.
+
+\textbf{Primary entry points/data:} \path{QueryMeasurement}, \path{validate_subset}, \path{evaluate_workload}.
+
+\Needspace{10\baselineskip}
+
+\section{result\_store.py}
+
+\textbf{Role:} Exact comparison storage\quad\textbf{Size:} 71 source lines.
+
+\plain{Compares large query outputs without retaining every result row in Python memory.}
+
+\technical{A temporary indexed SQLite table stores encoded typed tuples and source/target multiplicities by kind: result row, key or group. \path{add_batch()} collapses duplicate tuples within a batch; retention() computes intersection ratios. The context manager removes temporary data.}
+
+\textbf{Reads/calls project modules:} \path{runtime.py}.
+
+\textbf{Primary entry points/data:} \path{ResultStore}, \path{encode_values}, \path{temporary_result_store}.
+
+\Needspace{10\baselineskip}
+
+\section{source\_snapshot.py}
+
+\textbf{Role:} Source fingerprint\quad\textbf{Size:} 81 source lines.
+
+\plain{Records a content signature so unchanged row counts cannot hide changed values.}
+
+\technical{\path{capture_source_snapshot()} streams typed row hashes, combines them order-independently with schema definitions and exact counts, and returns SourceSnapshot. A verified snapshot on the same read view is reused. This verifies the observed contents; it does not log every external write.}
+
+\textbf{Reads/calls project modules:} \path{db.py}, \path{runtime.py}.
+
+\textbf{Primary entry points/data:} \path{SourceSnapshot}, \path{capture_source_snapshot}.
+
+\Needspace{10\baselineskip}
+
+\section{acceptance.py}
+
+\textbf{Role:} Quality gates\quad\textbf{Size:} 56 source lines.
+
+\plain{Rejects a copy that is structurally valid but loses required query behavior.}
+
+\technical{AcceptancePolicy evaluates survival and exact-result thresholds plus required query IDs. Failed evaluations always reject; a positive survival threshold with no eligible queries rejects. Required missing, excluded, failed or non-surviving queries also reject.}
+
+\textbf{Reads/calls project modules:} \path{types.py}.
+
+\textbf{Primary entry points/data:} \path{AcceptancePolicy}, \path{AcceptanceReport}.
+
+\Needspace{10\baselineskip}
+
+\section{target\_lock.py}
+
+\textbf{Role:} One writer per target\quad\textbf{Size:} 111 source lines.
+
+\plain{Stops two SafeSliceSQL workers from refreshing the same output simultaneously.}
+
+\technical{\path{target_lease()} uses a MySQL named lock based on connected schema identity or a file lock for file-backed SQLite, with a five-second timeout. \path{serialized_target()} converts lease failures into a failed BenchmarkRunResult. External writers need separate operational control.}
+
+\textbf{Reads/calls project modules:} \path{runtime.py}, \path{security.py}, \path{types.py}.
+
+\textbf{Primary entry points/data:} \path{target_lease}, \path{serialized_target}.
+
+\Needspace{10\baselineskip}
+
+\section{runtime.py}
+
+\textbf{Role:} Limits and cancellation\quad\textbf{Size:} 209 source lines.
+
+\plain{Allows a safe stop and guards against unexpectedly large or slow jobs.}
+
+\technical{Limits is a validated immutable settings object. Guard checks elapsed time, cancellation, memory and quotas. \path{bounded_engine()} attaches read-only sessions, eligible SELECT timeouts and SQLite progress hooks while keeping interrupted connections available for rollback.}
+
+\textbf{Primary entry points/data:} \path{OperationInterrupted}, \path{OperationCancelled}, \path{LimitExceeded}, \path{Limits}, \path{Guard}, \path{current}, \path{checkpoint}, \path{suspend_limits}, \path{cap}, \path{execution_context}, \path{bounded_engine}.
+
+\Needspace{10\baselineskip}
+
+\section{jobs.py}
+
+\textbf{Role:} History, recovery and retention\quad\textbf{Size:} 247 source lines.
+
+\plain{Records what a job created, marks abandoned work interrupted and cleans up only proven app-owned schemas.}
+
+\technical{Atomic JSON records include OS owner, host, PID/create time, phases, states, limits and exact schema/server identities. \path{register_schema()} records ownership after creation; pending creation intents remain distinct. Cleanup validates ownership, terminal state, age, name and server UUID.}
+
+\textbf{Reads/calls project modules:} \path{db.py}, \path{runtime.py}, \path{security.py}.
+
+\textbf{Primary entry points/data:} \path{Job}, \path{atomic_json}, \path{read_job}, \path{journal}, \path{register_schema}, \path{intend_schema}, \path{removed_schema}, \path{owned_jobs}, \path{recover_jobs}, \path{cleanup_expired}.
+
+\Needspace{10\baselineskip}
+
+\section{benchmark.py}
+
+\textbf{Role:} Repeatable experiment matrix\quad\textbf{Size:} 537 source lines.
+
+\plain{Runs all chosen combinations of method, copy size and seed and summarizes the results fairly.}
+
+\technical{\path{run_benchmark()} reuses one source transaction and fingerprint for the matrix, calls \path{run_pipeline()} per combination and exports raw rows. Summaries include attempted/succeeded/failed counts but compute mean/sample-standard-deviation only from successful measured runs.}
+
+\textbf{Reads/calls project modules:} \path{acceptance.py}, \path{automatic_workload.py}, \path{config.py}, \path{connection_scope.py}, \path{db.py}, \path{dependency_graph.py}, \path{pipeline.py}, \path{plots.py}, \path{reporting.py}, \path{runtime.py}, \path{sampler.py}, \path{schema_analyzer.py}, \path{source_snapshot.py}, \path{types.py}, \path{workload_analyzer.py}.
+
+\textbf{Primary entry points/data:} \path{load_benchmark_config}, \path{run_benchmark}.
+
+\Needspace{10\baselineskip}
+
+\section{reporting.py}
+
+\textbf{Role:} CSV and terminal results\quad\textbf{Size:} 353 source lines.
+
+\plain{Makes run results and validation outcomes readable and exportable.}
+
+\technical{\path{save_run_results_csv()} writes run-level and per-query CSVs, including acceptance and error evidence. Rich console printers present selection, generation, validation and workload sections without replacing machine-readable output.}
+
+\textbf{Reads/calls project modules:} \path{types.py}.
+
+\textbf{Primary entry points/data:} \path{save_run_results_csv}, \path{print_validation_summary}, \path{print_workload_summary}, \path{print_selection_summary}, \path{print_generation_summary}.
+
+\Needspace{10\baselineskip}
+
+\section{plots.py}
+
+\textbf{Role:} Benchmark charts\quad\textbf{Size:} 269 source lines.
+
+\plain{Draws comparisons of size, survival, retention, dependencies and runtime.}
+
+\technical{\path{generate_all_plots()} reads \path{benchmark_summary}.csv, uses successful observations and missing-value rules, writes static charts and removes stale generated charts when there is no measured data. A chart is only as current as its input summary.}
+
+\textbf{Reads/calls project modules:} \path{runtime.py}.
+
+\textbf{Primary entry points/data:} \path{generate_all_plots}.
+
+\Needspace{10\baselineskip}
+
+\section{saved\_results.py}
+
+\textbf{Role:} Reopen a saved copy\quad\textbf{Size:} 112 source lines.
+
+\plain{Stores a credential-free summary and lets you inspect an existing copy later.}
+
+\technical{\path{save_copy_summary()} writes readiness and row/validation summaries. \path{saved_outcome()} reconstructs connection settings using current credentials plus journaled target identity; \path{read_evidence()} loads timestamped verification. A saved ready flag is not proof of current contents.}
+
+\textbf{Reads/calls project modules:} \path{jobs.py}.
+
+\textbf{Primary entry points/data:} \path{save_copy_summary}, \path{load_summary}, \path{saved_outcome}, \path{read_evidence}.
+
+\Needspace{10\baselineskip}
+
+\section{copy\_evidence.py}
+
+\textbf{Role:} Fresh record evidence\quad\textbf{Size:} 180 source lines.
+
+\plain{Checks copied values and missing parents and provides sample records you can inspect.}
+
+\technical{\path{inspect_copy()} reads current schemas, compares copied rows with originals using declared keys and gathers relationship evidence. \path{collect_evidence()} uses read-only engines, appends source/target context and atomically writes \path{copy_verification}.json.}
+
+\textbf{Reads/calls project modules:} \path{jobs.py}, \path{record_browser.py}, \path{runtime.py}, \path{schema_compatibility.py}.
+
+\textbf{Primary entry points/data:} \path{inspect_copy}, \path{collect_evidence}.
+
+\Needspace{10\baselineskip}
+
+\section{record\_browser.py}
+
+\textbf{Role:} Search and compare records\quad\textbf{Size:} 151 source lines.
+
+\plain{Shows whether a record was kept unchanged, left out, missing from the original or changed.}
+
+\technical{Parameterized bounded searches compare both sides by full PK and follow parents. Queries are limited to 25 rows per side with pagination; wildcard input is escaped. \path{copy_engines()} checks saved MySQL server identity when present.}
+
+\textbf{Reads/calls project modules:} \path{runtime.py}.
+
+\textbf{Primary entry points/data:} \path{copy_engines}, \path{record_status}, \path{browse_records}, \path{search_copy}.
+
+\Needspace{10\baselineskip}
+
+\section{result\_views.py}
+
+\textbf{Role:} Results windows\quad\textbf{Size:} 632 source lines.
+
+\plain{Displays saved results, charts and before/after record connections in the desktop app.}
+
+\technical{Tk views consume CopyOutcome and saved evidence, draw record pairs and relationship links, open static charts and export a readable report. They delegate database work through background helpers and do not implement a separate sampler.}
+
+\textbf{Reads/calls project modules:} \path{friendly_report.py}, \path{record_browser.py}, \path{saved_results.py}, \path{user_errors.py}, \path{view_tasks.py}.
+
+\textbf{Primary entry points/data:} \path{chart_files}, \path{record_label}, \path{snapshot_record}, \path{show_record_pair}, \path{draw_connections}, \path{save_readable}, \path{show_saved_results}, \path{show_charts}, \path{evidence_text}, \path{show_evidence}.
+
+\Needspace{10\baselineskip}
+
+\section{friendly\_report.py}
+
+\textbf{Role:} Portable HTML report\quad\textbf{Size:} 192 source lines.
+
+\plain{Exports a printable report with copy size, integrity notes and record evidence.}
+
+\technical{\path{build_report()} renders escaped self-contained HTML and inline SVG charts. \path{export_report()} uses saved summaries/evidence; recorded-time notices distinguish an offline report from live verification. Browser Print/Save as PDF is available for app reports.}
+
+\textbf{Reads/calls project modules:} \path{saved_results.py}.
+
+\textbf{Primary entry points/data:} \path{escape}, \path{chart_data}, \path{bar_svg}, \path{build_report}, \path{export_report}.
+
+\Needspace{10\baselineskip}
+
+\section{view\_tasks.py}
+
+\textbf{Role:} Responsive read-only views\quad\textbf{Size:} 37 source lines.
+
+\plain{Runs verification and searches without freezing the window.}
+
+\technical{background() performs the task in a daemon worker under \path{execution_context()}, sends a queue result, and invokes UI callbacks from the Tk polling thread. Destroying the widget requests cancellation.}
+
+\textbf{Reads/calls project modules:} \path{runtime.py}, \path{security.py}.
+
+\textbf{Primary entry points/data:} \path{background}.
+
+\Needspace{10\baselineskip}
+
+\section{user\_errors.py}
+
+\textbf{Role:} Actionable errors\quad\textbf{Size:} 67 source lines.
+
+\plain{Explains common connection, permission, missing-file and limit problems in ordinary language.}
+
+\technical{\path{explain_error()} maps sanitized MySQL error codes and messages to guidance; \path{show_error()} provides retry and settings actions. It does not display raw SQL parameters or credentials.}
+
+\textbf{Primary entry points/data:} \path{explain_error}, \path{show_error}.
+
+\Needspace{10\baselineskip}
+
+\section{synthetic.py}
+
+\textbf{Role:} Generated-schema checks\quad\textbf{Size:} 308 source lines.
+
+\plain{Builds varied test databases and checks every method at small and full budgets.}
+
+\technical{\path{generate_database()} varies 3-6 tables, names, skew, nullable references, composite PKs and five graph shapes. \path{run_synthetic_suite()} runs 3 methods at 10/100 percent, repeats selection for reproducibility, checks integrity and requires exact full-budget results.}
+
+\textbf{Reads/calls project modules:} \path{config.py}, \path{db.py}, \path{dependency_graph.py}, \path{jobs.py}, \path{runtime.py}, \path{sampler.py}, \path{schema_analyzer.py}, \path{security.py}, \path{source_snapshot.py}, \path{subset_generator.py}, \path{validator.py}, \path{workload_analyzer.py}.
+
+\textbf{Primary entry points/data:} \path{synthetic_pair}, \path{generate_database}, \path{run_synthetic_suite}.
+
+\Needspace{10\baselineskip}
+
+\section{scale\_check.py}
+
+\textbf{Role:} Measured scale sweep\quad\textbf{Size:} 103 source lines.
+
+\plain{Measures how long generated tests take and how much client memory they use.}
+
+\technical{\path{run_scale_check()} sweeps requested levels/seeds, samples client RSS every 0.05 seconds, records CPU/wall time, actual per-case totals and retained artifact bytes, and persists completed/incomplete state. It explicitly sets \path{production_certification}=False.}
+
+\textbf{Reads/calls project modules:} \path{jobs.py}, \path{runtime.py}, \path{security.py}, \path{synthetic.py}.
+
+\textbf{Primary entry points/data:} \path{run_scale_check}.
+
+\Needspace{10\baselineskip}
+
+\section{types.py}
+
+\textbf{Role:} Shared data contracts\quad\textbf{Size:} 286 source lines.
+
+\plain{Defines the structured records passed between stages so results mean the same thing everywhere.}
+
+\technical{Dataclasses represent columns, foreign keys, tables, schema, closure, selection, generation, validation, query results, workload reports and benchmark runs. ValidationReport.\path{is_valid} combines structural checks while treating \path{source_unchanged}=None as unverified rather than False.}
+
+\textbf{Reads/calls project modules:} \path{acceptance.py}.
+
+\textbf{Primary entry points/data:} \path{DatabaseResolutionError}, \path{ColumnMetadata}, \path{ForeignKeyMetadata}, \path{TableMetadata}, \path{SchemaMetadata}, \path{ClosureResult}, \path{SelectionResult}, \path{GenerationResult}, \path{ValidationReport}, \path{QueryResult}, \path{WorkloadReport}, \path{BenchmarkRunResult}, \path{BenchmarkResults}.
+
+\endgroup

@@ -1,0 +1,76 @@
+{
+  "pages": 63,
+  "application_module_explanations": 45,
+  "test_module_summaries": 28,
+  "application_source_unchanged": true,
+  "function_catalogue": "Separate technical companion",
+  "teaching_example": {
+    "backend": "sqlite",
+    "selection": "Deliberately chosen six-row copy",
+    "source_rows": 13,
+    "copy_rows": 6,
+    "query_survival": 1.0,
+    "average_exact_retention": 0.5666666666666667,
+    "average_key_retention": 0.6333333333333333
+  },
+  "no_overfull_boxes": true,
+  "no_out_of_bounds_words": true,
+  "no_missing_glyphs": true,
+  "section_starts": [
+    {
+      "page": 4,
+      "heading": "The problem, explained from the beginning"
+    },
+    {
+      "page": 6,
+      "heading": "The few technical words you actually need"
+    },
+    {
+      "page": 8,
+      "heading": "The shop, before and after"
+    },
+    {
+      "page": 11,
+      "heading": "From your click to the finished copy"
+    },
+    {
+      "page": 15,
+      "heading": "How the three methods choose records"
+    },
+    {
+      "page": 18,
+      "heading": "Read the percentages without getting misled"
+    },
+    {
+      "page": 23,
+      "heading": "Understand the settings"
+    },
+    {
+      "page": 26,
+      "heading": "Run your first real test"
+    },
+    {
+      "page": 28,
+      "heading": "Read the saved results"
+    },
+    {
+      "page": 31,
+      "heading": "Explain the project in your review"
+    },
+    {
+      "page": 34,
+      "heading": "How the files work together"
+    },
+    {
+      "page": 57,
+      "heading": "The other folders and files: what to open first"
+    },
+    {
+      "page": 62,
+      "heading": "Glossary and where to go next"
+    }
+  ],
+  "short_pages": [
+    33
+  ]
+}

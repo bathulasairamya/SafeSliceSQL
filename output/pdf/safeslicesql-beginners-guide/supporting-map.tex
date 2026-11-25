@@ -1,0 +1,161 @@
+\chapter{The other folders and files: what to open first}
+
+A repository includes code, instructions, test inputs and generated outputs. Understanding the project does not require treating every output image or downloaded data row as another algorithm file.
+
+\section{Launch and installation files}
+
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{0.38\linewidth}>{\RaggedRight\arraybackslash}p{0.52\linewidth}}
+\toprule
+\textbf{File} & \textbf{Plain-language purpose} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{File} & \textbf{Plain-language purpose} \\
+\midrule
+\endhead
+demo.bat & Starts the desktop from the project environment. It is a launcher, not the selection algorithm. \\[5pt]
+Terminal Demo.bat & Starts the numbered terminal demonstration menu. \\[5pt]
+pyproject.toml & Declares the Python package, supported Python version, dependencies, optional extras and safeslice command. \\[5pt]
+requirements.txt & Installs the project and its requested extras for a general development environment. \\[5pt]
+requirements-demo-windows-py310.txt & Pins the dependency versions for the tested Windows/Python 3.10 demonstration setup. \\[5pt]
+.env.example & Public example of connection, logging, credential-reference and resource-limit settings. \\[5pt]
+.env & Your private real settings. Keep credentials private; this guide does not reproduce them. \\[5pt]
+\bottomrule
+\end{longtable}
+
+\section{Instructions and input files}
+
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{0.38\linewidth}>{\RaggedRight\arraybackslash}p{0.52\linewidth}}
+\toprule
+\textbf{Location} & \textbf{How it helps you} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Location} & \textbf{How it helps you} \\
+\midrule
+\endhead
+README.md & Installation, launching, download links, custom workload examples and manual relationship checks. \\[5pt]
+docs/technical.md & Precise algorithm, metric and supported-scope definitions after the beginner explanation makes sense. \\[5pt]
+docs/operations.md & Commands, permissions, acceptance, cancellation, ownership, cleanup and scale-check behavior. \\[5pt]
+examples/demo-orders.csv & A fictional 20-row CSV for learning the interface. At 25 percent the cap is five. \\[5pt]
+datasets/README.md & Explains local third-party downloads and what structural checks were performed. \\[5pt]
+datasets/manifest.json & Records sources, counts, sizes, hashes and archive checks. Downloading a file is not proof of an end-to-end slice. \\[5pt]
+datasets/csv/, mysql/, archives/ & Downloaded payloads and original archives; absent from a fresh Git clone because these payloads are ignored. \\[5pt]
+\bottomrule
+\end{longtable}
+
+\section{Workloads and experiment instructions}
+
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{0.4\linewidth}>{\RaggedRight\arraybackslash}p{0.5\linewidth}}
+\toprule
+\textbf{File} & \textbf{Which questions or experiment it defines} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{File} & \textbf{Which questions or experiment it defines} \\
+\midrule
+\endhead
+workloads/workload.sql & Eight Employees questions, including filters, joins, grouped answers and an intentionally empty result. \\[5pt]
+workloads/\path{world_workload.sql} & Six World questions about countries, cities, languages and continent groups. \\[5pt]
+workloads/\path{testing_world.sql} & Three targeted World questions for keys, country parents and group coverage. \\[5pt]
+workloads/\path{testing_chinook.sql} & Three Chinook questions for invoice relationships, playlists and genres. \\[5pt]
+workloads/\path{testing_employees.sql} & Three Employees questions for current salaries, assignments and department groups. \\[5pt]
+workloads/\path{testing_diamonds.sql} & Two category/detail questions for a singly imported Diamonds CSV. \\[5pt]
+workloads/\path{testing_taxis.sql} & Two payment/borough questions for a singly imported Taxis CSV. \\[5pt]
+benchmarks/benchmarks.yaml & SQLite demonstration: 3 methods, 3 percentages and 3 seeds, giving 27 experiments. \\[5pt]
+benchmarks/\path{benchmarks_world.yaml} & World comparison: 3 methods, 3 percentages and 2 seeds, giving 18 experiments. \\[5pt]
+\bottomrule
+\end{longtable}
+
+\section{Helper scripts and automated checks}
+
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{0.4\linewidth}>{\RaggedRight\arraybackslash}p{0.5\linewidth}}
+\toprule
+\textbf{Location} & \textbf{What it contributes} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Location} & \textbf{What it contributes} \\
+\midrule
+\endhead
+scripts/\path{seed_sqlite_db.py} & Builds a local Employees-like example. Its small synthetic sample is not the full downloaded Employees database. \\[5pt]
+scripts/\path{generate_plots.py} & Calls the application plot generator for an existing summary CSV. \\[5pt]
+scripts/\path{create_1pct_targets.sql} & Manually creates dedicated Employees comparison targets for three methods. \\[5pt]
+scripts/\path{least_privilege_mysql.sql} & An administrator-reviewed example separating source-read permissions from owned-target write permissions. \\[5pt]
+tests/ & Behavioral checks for selection, parser, copying, metrics, UI services, safety and reporting. Tests are examples of expected behavior, not application entry points. \\[5pt]
+tests/conftest.py & Provides reusable settings and fixtures shared by tests. \\[5pt]
+tests/\_\_init\_\_.py & Marks the test package. \\[5pt]
+.github/workflows/ci.yml & Tells hosted CI how to run Python checks and disposable MySQL tests. Read an actual CI run before claiming it passed. \\[5pt]
+\bottomrule
+\end{longtable}
+
+\section{Every test module, in ordinary language}
+
+The table identifies the question each test file helps answer. The full test-function and source reference remains in the technical companion. A db-marked check needs its appropriate database setup; it is not demonstrated by a non-database test run.
+
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{0.43\linewidth}>{\RaggedRight\arraybackslash}p{0.47\linewidth}}
+\toprule
+\textbf{Test file} & \textbf{What it asks} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Test file} & \textbf{What it asks} \\
+\midrule
+\endhead
+\path{test_benchmark.py} & Does the experiment matrix run and export summaries/plots correctly? \\[5pt]
+\path{test_cli.py} & Are terminal help, bad options and missing inputs handled clearly? \\[5pt]
+\path{test_config_db.py} & Are roles, URLs, configuration errors and passwords handled correctly? \\[5pt]
+\path{test_copy_and_parser_regressions.py} & Do tricky copying/SQL-text cases avoid returning previously fixed bugs? \\[5pt]
+\path{test_copy_evidence.py} & Does current verification check copied values and parent evidence beyond the few visible samples? \\[5pt]
+\path{test_dataset_input.py} & Do CSV/Excel reading, text values, malformed inputs and automatic workloads behave as intended? \\[5pt]
+\path{test_demo.py} & Do menu choices really reach the intended CLI action safely? \\[5pt]
+\path{test_dependencies.py} & Are required parents, nulls, cycles and closure calculations correct? \\[5pt]
+\path{test_desktop.py} & Does the window service distinguish ready, failed and interrupted work correctly? \\[5pt]
+\path{test_input_picker.py} & Do source selection, cancellation and database discovery work without accidental preparation? \\[5pt]
+\path{test_input_preview.py} & Does the preview agree with import and enforce size/format limits? \\[5pt]
+\path{test_metrics_regressions.py} & Do duplicate answers, grouping, errors and empty results keep honest metric meanings? \\[5pt]
+\path{test_mysql_safety.py} & Do real MySQL transactions, source protection, limits and schema rules work in integration? \\[5pt]
+\path{test_performance_regressions.py} & Do intended fast paths avoid unnecessary scans, closure work or duplicate writes? \\[5pt]
+\path{test_pipeline.py} & Do shared stages run in order and preserve useful failure evidence? \\[5pt]
+\path{test_production_controls.py} & Do quality gates, ownership, credentials, stops and recorded scale evidence follow their rules? \\[5pt]
+\path{test_remaining_regressions.py} & Do failure propagation, deterministic sampling, invalid settings and bounded streams stay correct? \\[5pt]
+\path{test_reporting.py} & Are exported CSVs and displayed summaries consistent with the result objects? \\[5pt]
+\path{test_review_fixes.py} & Do previously reviewed problems such as triggers, witnesses and acceptance rollback stay fixed? \\[5pt]
+\path{test_safety_regressions.py} & Do identity, structure, orphan and unique-parent checks fail safely in problematic cases? \\[5pt]
+\path{test_sampler.py} & Do all methods respect budgets, repeat seeds and support declared key shapes? \\[5pt]
+\path{test_schema.py} & Are real table descriptions and key/count metadata discovered correctly? \\[5pt]
+\path{test_smoke.py} & Can configuration, imports, commands and optional live connections start as expected? \\[5pt]
+\path{test_subset_generator.py} & Does copying preserve structure/values and handle transaction failures? \\[5pt]
+\path{test_synthetic.py} & Are generated cases repeatable, varied and safely owned/cleaned up? \\[5pt]
+\path{test_user_experience.py} & Do search, paging, saved reports and error explanations support a practical user flow? \\[5pt]
+\path{test_validator.py} & Can the validator detect broken references/keys and compute retention correctly? \\[5pt]
+\path{test_workload.py} & Are queries loaded, analyzed and used for reproducible workload-aware selection? \\[5pt]
+\bottomrule
+\end{longtable}
+
+\section{Generated and private folders}
+
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{0.36\linewidth}>{\RaggedRight\arraybackslash}p{0.54\linewidth}}
+\toprule
+\textbf{Location} & \textbf{How to interpret it} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Location} & \textbf{How to interpret it} \\
+\midrule
+\endhead
+results/ & Reports, plots, saved outcomes, self-tests and scale evidence. An old result can describe older code or settings. \\[5pt]
+logs/ & Diagnostics useful for finding a failing phase; protect sensitive schema/input context. \\[5pt]
+data/ & Local SQLite examples and their historical target states; these are not full upstream datasets. \\[5pt]
+build/ & Generated packaging copies. The canonical current code is under src/. \\[5pt]
+.venv/ & Installed Python dependencies and tools; this is environment infrastructure, not the core project algorithm. \\[5pt]
+.git/, .gitignore & Version history and rules deciding which local files are omitted from version control. \\[5pt]
+.\path{pytest_cache}/, .\path{ruff_cache}/, .coverage & Generated developer state. A cache is not proof that the current code passed tests. \\[5pt]
+\bottomrule
+\end{longtable}
+
+\section{A practical reading order}
+
+Open README first. Then read \path{desktop_service.py} or cli.py to see how a request enters, pipeline.py to see the stage order, sampler.py with \path{dependency_graph.py} to see choices, \path{subset_generator.py} to see writes, and validator.py to see checks. Use tests for a specific behavior and the exact function reference when you need a parameter detail.
+
+The application-source coverage is 45 modules. The supporting-file/test map covers the remaining kinds of tracked files. The technical companion has the complete 103-path manifest and 255-function/method index, without requiring this first-principles guide to become a signature catalogue.

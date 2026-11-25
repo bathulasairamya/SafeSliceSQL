@@ -1,0 +1,564 @@
+% !TeX program = xelatex
+% XeLaTeX is recommended; pdfLaTeX and LuaLaTeX are supported too.
+\documentclass[11pt,a4paper,oneside]{report}
+\usepackage[left=25mm,right=23mm,top=23mm,bottom=24mm,headheight=15pt]{geometry}
+\usepackage{iftex}
+\ifPDFTeX
+  % Type 1 editions of the same font families work with pdfLaTeX.
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{tgpagella,tgheros}
+  \usepackage[scale=0.88]{tgcursor}
+\else
+  % OpenType font configuration for XeLaTeX, LuaLaTeX and Tectonic.
+  \usepackage{fontspec}
+  \setmainfont{texgyrepagella-regular.otf}[BoldFont=texgyrepagella-bold.otf,ItalicFont=texgyrepagella-italic.otf,BoldItalicFont=texgyrepagella-bolditalic.otf]
+  \setsansfont{texgyreheros-regular.otf}[BoldFont=texgyreheros-bold.otf,ItalicFont=texgyreheros-italic.otf]
+  \setmonofont{texgyrecursor-regular.otf}[BoldFont=texgyrecursor-bold.otf,ItalicFont=texgyrecursor-italic.otf,BoldItalicFont=texgyrecursor-bolditalic.otf,Scale=0.88]
+\fi
+\usepackage{amsmath,amssymb,booktabs,longtable,tabularx,array,graphicx,xcolor}
+\usepackage{fancyhdr,titlesec,enumitem,listings,needspace,etoolbox,xurl,ragged2e}
+\usepackage[protrusion=true,expansion=false]{microtype}
+\usepackage[unicode,colorlinks=true,linkcolor=navy,urlcolor=teal,citecolor=navy]{hyperref}
+\definecolor{navy}{HTML}{17324D}
+\definecolor{teal}{HTML}{277D77}
+\definecolor{muted}{HTML}{526371}
+\definecolor{wash}{HTML}{F1F4F7}
+\definecolor{rulegray}{HTML}{D2DCE3}
+\hypersetup{pdftitle={SafeSliceSQL: Complete Project Workflow and Review Guide},pdfauthor={Prepared from the SafeSliceSQL repository},pdfsubject={Plain-language and technical walkthrough, file atlas, functions, parameters and measured evidence},bookmarksnumbered=true}
+\AtBeginDocument{\RaggedRight}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\linespread{1.10}
+\setlength{\emergencystretch}{3em}
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.15}
+\AtBeginEnvironment{longtable}{\small}
+\setlist[itemize]{leftmargin=1.5em,itemsep=3pt,topsep=4pt}
+\setlist[enumerate]{leftmargin=1.8em,itemsep=4pt,topsep=4pt}
+\titleformat{\chapter}[display]{\sffamily\bfseries\color{navy}}{\large\chaptertitlename\ \thechapter}{5pt}{\LARGE}
+\titlespacing*{\chapter}{0pt}{0pt}{16pt}
+\titleformat{\section}{\sffamily\large\bfseries\color{navy}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\sffamily\normalsize\bfseries\color{navy}}{\thesubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{14pt}{5pt}
+\titlespacing*{\subsection}{0pt}{10pt}{3pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\sffamily\small\color{muted}SafeSliceSQL | Project workflow and review guide}
+\fancyfoot[L]{\sffamily\footnotesize\color{muted}Source snapshot: 25 November 2026}
+\fancyfoot[R]{\sffamily\small\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancypagestyle{plain}{\fancyhf{}\fancyfoot[L]{\sffamily\footnotesize\color{muted}SafeSliceSQL | Reviewed 25 November 2026}\fancyfoot[R]{\sffamily\small\thepage}\renewcommand{\headrulewidth}{0pt}}
+\lstset{basicstyle=\ttfamily\footnotesize,keywordstyle=\color{navy}\bfseries,commentstyle=\color{muted},stringstyle=\color{teal},backgroundcolor=\color{wash},frame=single,rulecolor=\color{rulegray},framerule=0.3pt,framesep=7pt,breaklines=true,breakatwhitespace=false,columns=fullflexible,keepspaces=true,showstringspaces=false,tabsize=4,aboveskip=8pt,belowskip=8pt}
+\newcommand{\plain}[1]{\par\textbf{In plain language.} #1\par}
+\newcommand{\technical}[1]{\par\textbf{Technically.} #1\par}
+\newcommand{\source}[1]{\par{\small\color{muted}\textbf{Implementation:} \path{#1}}\par}
+\newcommand{\reviewpoint}[1]{\par\begingroup\setlength{\fboxsep}{9pt}\noindent\colorbox{wash}{\parbox{\dimexpr\linewidth-18pt\relax}{\textbf{Review highlight.} #1}}\endgroup\par}
+\setcounter{tocdepth}{1}
+\setcounter{secnumdepth}{2}
+
+\begin{document}
+\hypersetup{pageanchor=false}
+\begin{titlepage}
+\thispagestyle{empty}
+\vspace*{13mm}
+{\sffamily\large\bfseries\color{teal}PROJECT UNDERSTANDING SERIES\par}
+\vspace{13mm}
+{\sffamily\fontsize{37}{43}\selectfont\bfseries\color{navy}SafeSliceSQL\par}
+\vspace{6mm}
+{\sffamily\fontsize{22}{28}\selectfont\color{navy}Complete Workflow\par and Project Review Guide\par}
+\vspace{12mm}
+{\Large From the first input to the committed copy,\par with a file-by-file explanation.\par}
+\vspace{10mm}
+\rule{\linewidth}{0.6pt}
+\vspace{5mm}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{.25\linewidth}X@{}}
+\textbf{Audience} & Student, evaluator, developer and future maintainer \\
+\textbf{Reading style} & Plain-language explanations alongside technical detail \\
+\textbf{Project version} & 0.1.0; Python 3.10+; MySQL 8.x / InnoDB application scope \\
+\textbf{Reviewed} & 25 November 2026 \\
+\textbf{Source baseline} & \path{ac58c45a8b7d34c948e39332f2ad157f241edbbc} \\
+\end{tabularx}
+\vfill
+\reviewpoint{The central promise is a smaller, checked database under a hard total-row budget, with the required parent records preserved. Query preservation is measured and gated; it is not guaranteed merely by keeping foreign keys valid.}
+\vspace{8mm}
+{\small Prepared from local application source, configuration, tests and saved result artifacts. Private connection secrets are excluded. Fresh checks and historical measurements are labelled separately.\par}
+\end{titlepage}
+
+\hypersetup{pageanchor=true}
+\pagenumbering{roman}
+\chapter*{How to use this guide}
+\addcontentsline{toc}{chapter}{How to use this guide}
+This document answers four questions in order: \emph{What does the project do? How does one job actually run? Which file owns each behavior? What evidence can you show in a review?}
+
+For a first reading, follow Chapters 1--8. They explain the workflow, inputs, algorithms, parameters, metrics and evidence. Chapter 9 gives a practical runbook; Chapter 10 prepares you for a review. The appendices are a lookup reference for every application module, supporting tracked file, test module and module/class function.
+
+Each \textbf{In plain language} paragraph gives the idea without assuming database expertise. Each \textbf{Technically} paragraph connects it to the implementation. Code paths, defaults and formulas refer to the inspected source, not a hypothetical future design.
+
+\textbf{Evidence labels matter.} ``Fresh'' means a check was run while preparing this guide. ``Saved'' or ``historical'' means the result was read from an existing local artifact. ``Example'' means an explanatory calculation, not a benchmark observation. The three labels are never interchangeable.
+
+\textbf{What ``Fn values'' means here.} The guide includes function signatures, inputs, return objects, default values and scoring constants. The software is not a classifier, so it does not report a classification confusion matrix, false-negative count or F1 score. Its reported metrics concern database integrity, query survival, result retention and runtime.
+
+\textbf{Coverage boundary.} The atlas covers all 103 tracked repository files in the reviewed snapshot, including 45 application Python modules and 28 behavioral test modules. Generated folders and third-party payloads are explained by their purpose and provenance. The source inventory records SHA-256 hashes; the evidence snapshot records the specific results cited here.
+
+\tableofcontents
+\clearpage
+\pagenumbering{arabic}
+
+\chapter{The project in one clear picture}
+\section{The problem being solved}
+\plain{A large database is inconvenient when you only need a small copy for development, testing or a demonstration. Picking records independently can leave an order without its customer, or a salary without its employee. SafeSliceSQL chooses a smaller set and includes the records those choices depend on.}
+\technical{SafeSliceSQL is a Python database-subsetting application. Given a source schema, a fixed read-only SQL workload, a row budget and a random seed, it selects row keys, computes required foreign-key parent closure, materializes a separate target and measures query behavior. A heuristic chooses the subset; validation and acceptance decide whether it can be committed.}
+
+The copy is stored in MySQL for the supported desktop/CSV application flow. SQLite is also used for local tests, example benchmarks and the temporary query-result comparison store. Supporting SQLite internally does not mean that PostgreSQL, SQL Server or arbitrary SQLAlchemy backends are part of the supported application promise.
+
+\section{What is the main file?}
+There are several entry points, each with a different responsibility:
+\begin{itemize}
+\item \path{demo.bat} starts the desktop presentation. \path{desktop.py:main()} starts Tkinter; the \path{Desktop} class owns the window.
+\item \path{cli.py:app} is the Typer command-line application installed as \path{safeslice}. \path{Terminal Demo.bat} opens the numbered menu in \path{demo.py}.
+\item \path{desktop_service.py:create_copy()} turns a desktop request into prepared input and benchmark settings.
+\item \textbf{\path{pipeline.py:run_pipeline()}} is the core coordinator for one checked slice. It calls the selector, materializer, workload evaluator, structural validator and acceptance gate.
+\item \path{sampler.py:select_rows()} owns the three selection strategies. It is the main algorithm file, but does not itself commit a database copy.
+\end{itemize}
+\reviewpoint{If an evaluator asks for ``the main algorithm'', show \path{sampler.py} with \path{dependency_graph.py}. If asked for ``the complete execution'', show \path{pipeline.py}. If asked for ``what starts the app'', show the launcher and \path{desktop.py}/\path{cli.py}.}
+
+\section{One-page execution map}
+\begin{figure}[htbp]
+\centering\includegraphics[width=\linewidth]{assets/workflow.pdf}
+\caption{The common end-to-end flow. The target transaction remains open while the callback evaluates workload, validates the subset and applies the quality gate. Source: current application code.}
+\end{figure}
+
+\section{The four objects you should keep separate}
+\begin{description}[style=nextline,leftmargin=1.5em,labelindent=0pt]
+\item[Source database] The original relational input. Existing user-selected sources are read through read-only connections. CSV/Excel input first becomes a newly owned imported source schema.
+\item[Target database] The separate smaller copy. Desktop jobs create a fresh UUID-named target; the CLI can refresh an explicitly named compatible target.
+\item[Workload] A file of supported SELECT statements describing query behavior worth checking. The app can generate structural queries, but these are not automatically your real business requirements.
+\item[Report artifacts] CSV/JSON/YAML/HTML/PNG files describing what was attempted, selected, committed, measured or rejected. A report directory is not an SQL database dump.
+\end{description}
+
+\chapter{A job from the first click to the final output}
+\section{Start, load settings and show the interface}
+\plain{The launcher opens the app using the project's Python environment. You choose data and a copy percentage. The program reads where your MySQL servers are, but connection passwords do not belong in reports.}
+\technical{The batch launcher sets the project working directory and PYTHONPATH. Configuration loads the project-relative environment file into separate source and target DatabaseConfig objects, represented by SQLAlchemy URLs. Desktop defaults are a 10-percent budget, workload-aware selection, seed 42, minimum survival 1.0 and minimum exact retention 0.0. CLI run requires method and percentage explicitly and defaults its quality thresholds to 0.0 for compatibility.}
+\source{demo.bat; src/safeslicesql/config.py; src/safeslicesql/desktop_service.py; src/safeslicesql/cli.py}
+
+\section{Preview without creating a copy}
+\plain{The preview tells you the input's size so you can choose a sensible limit. It also warns when a schema or file cannot be handled.}
+\technical{\path{preview_input()} streams files with \path{iter_input_tables()}, or inspects an existing database using a read-only source engine. It validates row widths and configured limits. MySQL table counts are exact COUNT-based counts rather than information-schema estimates. The current CLI inspection label still says ``approx'', but the underlying counts are exact. No target is constructed for a CLI --dry-run selection.}
+\source{src/safeslicesql/input_preview.py; src/safeslicesql/schema_analyzer.py; src/safeslicesql/cli.py}
+
+\section{Prepare one of two input paths}
+\subsection{Path A: existing MySQL database}
+Select a database already imported into MySQL. SafeSliceSQL reads its declared types and keys, generates a structural workload and creates a separate target schema such as \path{safeslice_output_<16-hex-token>}. The application does not interpret a downloaded .sql dump through the CSV picker; load that dump with a MySQL client first.
+\subsection{Path B: CSV, CSV folder or XLSX workbook}
+The app creates \path{safeslice_input_<token>} on the \emph{target server}, streams tables into it and adds integer \path{_safeslice_id} keys. It creates an additional output schema for the smaller copy. Files are therefore not processed entirely without MySQL, even though previewing a CSV can happen without a server.
+
+Table names follow \path{data_<number>_<sanitized-file-or-sheet-stem>}. CSV cells are preserved as strings in text/LONGTEXT columns; empty CSV fields remain empty strings. Excel None cells can become SQL NULL, and formulas are read as formula text. Header normalization resolves blanks, duplicate/case-equivalent names and the generated-key collision, retaining a mapping in the manifest. Types and relationships are not inferred.
+\source{src/safeslicesql/dataset_input.py}
+
+\section{Create the job record and experiment settings}
+\plain{The app records the work it is about to do so a failure or restart can be explained later.}
+\technical{\path{create_copy()} validates the immutable CopyRequest, creates a new output directory, opens a job journal and installs an execution context. \path{prepare_dataset()} records pending schema intents before creation and confirmed name/server ownership after creation. \path{write_experiment_config()} records methods, percentages, seeds, workload and acceptance in run.yaml. Desktop uses the benchmark engine even for a single selected method.}
+
+The dataset manifest records table counts, input mappings, import semantics and automatic workload path. The job journal records local owner/host/process identity, phase, limits and state. Neither is intended to store a reusable database password.
+
+\section{Freeze and inspect the source}
+\plain{Every stage should agree on what the original database looked like. Otherwise a changing source could make the measured comparison inconsistent.}
+\technical{\path{source_transaction()} establishes or reuses one source read view. \path{capture_source_snapshot()} streams schema and typed row fingerprints plus exact per-table counts. \path{inspect_schema()} reuses those counts, reflects keys and builds the dependency graph. The benchmark matrix shares this view and verified snapshot across methods and seeds. A caller-supplied baseline from a different view must match before target changes.}
+
+The source fingerprint combines order-independent typed row hashes with schema and count information. It detects same-count value edits in endpoint comparisons. In the normal pipeline the verified fingerprint refers to the fixed read view; it does not claim that external writers have ceased activity. A long read view can keep MySQL row versions alive.
+
+\section{Read the workload and select records}
+The lexer splits statements with quote/comment awareness. The analyzer assigns Q1, Q2, etc., extracts features and marks unsupported SQL with reasons. Pipeline setup avoids executing all source queries solely to count them, because evaluation streams them later. At least one usable SELECT is required for workload-aware selection.
+
+\path{select_rows()} builds or accepts a graph, validates its budget/key assumptions, clears per-selection FK caches and dispatches one of three strategies. Every accepted candidate includes the missing required parents and must fit the same hard total-row budget. The result is a SelectionResult of keys and diagnostic counts; it is not yet a completed database copy.
+
+\section{Copy, check, and only then commit}
+\plain{The program places rows in the output in a safe order, checks that they are right, and saves the transaction only if the copy is acceptable.}
+\technical{\path{run_pipeline()} takes a per-target lease. \path{materialize_subset()} checks actual source/target identity and exact structural compatibility, creates missing structures, then refreshes data in a transaction. It deletes children before parents and inserts parents before children. Self-references are ordered at row level; generated columns are computed by the target. Each copied batch is read back and compared with its source values.}
+
+Before transaction exit, the callback evaluates the workload, validates schema/keys/FKs/budget/source evidence and evaluates AcceptancePolicy. Failed SQL execution, invalid structure or rejected quality raises an error and rolls back target DML. Handled failures attempt to remove only tables created by the attempt. MySQL DDL is not transactional, so a hard crash can leave empty schema remnants even though DML is protected.
+\reviewpoint{Acceptance runs \emph{inside} the target DML transaction. A green structural check alone must not turn a lost-required-query copy into a committed success.}
+\source{src/safeslicesql/pipeline.py; src/safeslicesql/subset_generator.py; src/safeslicesql/target_lock.py}
+
+\section{Save, inspect, reopen and clean up}
+Run and per-query CSVs are exported, then the benchmark writes combined raw CSVs and successful-run summaries. Desktop saves \path{copy_summary}.json, shows Results, offers charts and performs read-only evidence/search actions. Verify again checks current data; saved verification has a recorded inspection time. An offline HTML report can be opened without pretending it is a live check.
+
+Successful imported schemas and copies remain available. History can restore choices for a new run; it does not resume half-executed SQL. Expired-schema cleanup is explicit and restricted to proven app-owned generated names on the recorded server. Report/log/input retention remains a separate filesystem policy.
+
+\chapter{Inputs, datasets, databases and SQL workloads}
+\section{Supported and unsupported scope}
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{.25\linewidth}>{\RaggedRight\arraybackslash}p{.67\linewidth}}
+\toprule\textbf{Supported} & \textbf{Meaning}\\\midrule\endhead
+MySQL 8.x / InnoDB & Main application backend. Nontransactional source/target tables are rejected during safe copy preparation.\\[4pt]
+Declared PK on every table & Single-column and composite primary keys are supported; tuple order follows schema order.\\[4pt]
+Single-column FKs & A child may have multiple separate single-column FKs. References to supported unique parent columns resolve to the actual parent PK.\\[4pt]
+Acyclic dependencies & Cross-table graph must be acyclic. Self-referencing tables are allowed when their actual row dependencies are acyclic. NULL means no parent dependency.\\[4pt]
+Restricted SELECT workload & WHERE, explicit inner joins, GROUP BY, HAVING and COUNT/SUM/MIN/MAX/AVG subject to analyzer validation.\\[4pt]
+CSV / folder / XLSX & Text-preserving import into owned MySQL schemas; no inferred FK or numeric type semantics.\\\bottomrule
+\end{longtable}
+
+Composite/cross-database FKs, cross-table cycles and cyclic self-references are outside scope. Unsupported workload constructs include outer/comma joins, subqueries, CTEs, set operations, window functions, DML/DDL and dynamic/parameterized statements. Database-qualified workload table names are excluded so evaluation on the target cannot accidentally read a named source schema. Treat SQL as trusted application input; this parser is not a security isolation layer.
+
+\section{Recommended inputs above 5,000 source rows}
+Counts for a relational database mean the total across base tables; not every lookup table must exceed 5,000 rows. The smaller copy is allowed to fall below that size. These counts are standard upstream dataset sizes documented in README; a new download must be counted before running.
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{.18\linewidth}>{\RaggedRight\arraybackslash}p{.17\linewidth}>{\RaggedRight\arraybackslash}p{.20\linewidth}>{\RaggedRight\arraybackslash}p{.37\linewidth}}
+\toprule\textbf{Input} & \textbf{Source rows} & \textbf{First budget} & \textbf{What it exercises}\\\midrule\endhead
+World & 5,302; 3 tables & 20\%: at most 1,060 & Cities, countries, languages; composite language key and parent relationships.\\[4pt]
+Chinook 1.4.5 & 15,607; 11 tables & 10\%: at most 1,560 & Invoices, customers, tracks, playlists and acyclic employee hierarchy.\\[4pt]
+Employees & 3,919,015; 6 base tables & 1\%: at most 39,190 & Salary history, composite keys and larger source scans. Standard salaries table has 2,844,047 rows.\\[4pt]
+Diamonds CSV & 53,940; 10 columns & 10\%: at most 5,394 & Larger single-table string-preserving sampling with category queries.\\[4pt]
+Taxis CSV & 6,433; 14 columns & 20\%: at most 1,286 & Date-like strings, payment categories and empty CSV cells.\\\bottomrule
+\end{longtable}
+
+Downloads and setup instructions are in README. Sources: \href{https://dev.mysql.com/doc/index-other.html}{official MySQL samples}, \href{https://github.com/lerocha/chinook-database}{Chinook}, \href{https://github.com/datacharmer/test_db}{Employees} and \href{https://github.com/mwaskom/seaborn-data}{Seaborn example data}. The local download manifest records structural checks; it is not end-to-end certification for every schema feature.
+
+\section{What actually exists in this checkout}
+The ignored CSV folder contains Iris (150), Tips (244), Penguins (344), Titanic (891) and Diamonds (53,940). The first four remain useful tiny examples but are below the requested larger-input threshold. The local SQL payload folder contains ClassicModels and Employees. ClassicModels has fewer than 5,000 total rows and is not on the larger-input shortlist. Chinook and Taxis are listed for later download; no local end-to-end result is claimed for them.
+
+The manifest records a past failed World archive download. Independently, the results directory contains an older MySQL World benchmark. A failed local archive download does not prove that no World database was ever available on a server; treat download records and executed-result records as separate evidence.
+
+The local SQLite employee example has \textbf{2,018 source rows}: departments 9, employees 500, dept\_emp 500, dept\_manager 9, titles 500 and salaries 500. It is not the 3.9-million-row upstream Employees database. The existing local SQLite target contains departments 9, employees 500, dept\_emp 298 and zero rows in the other three tables (807 total); it is a historical generated state, not a fresh full copy.
+
+\section{How synthetic inputs are generated}
+\plain{The self-test deliberately changes the structure and data, rather than testing the same tiny schema repeatedly.}
+\technical{Five shapes cycle through chain, star, branching, self-reference and independent tables. A seeded generator creates 3--6 tables, a composite-key leaf, nullable references, repeated categories and varying row counts. The first table has roughly one quarter of the requested per-table bound; other nonempty tables have between half and all of that bound. One independent-case table is deliberately empty.}
+For generated parent references, the data generator chooses NULL with probability 0.2; otherwise it favors the first parent with probability 0.7 before using a uniform alternative. Self-references only point backward to earlier keys, producing an acyclic hierarchy. Categories include a repeated A and a quoted value such as O'Reilly. These are synthetic test-data choices, not selector scoring coefficients or learned business distributions.
+
+\section{Workload files and query intent}
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{.44\linewidth}>{\RaggedRight\arraybackslash}p{.10\linewidth}>{\RaggedRight\arraybackslash}p{.38\linewidth}}
+\toprule\textbf{File} & \textbf{SQL count} & \textbf{Purpose}\\\midrule\endhead
+\path{workloads/workload.sql} & 8 & Employees filters, joins, groups, HAVING and intentionally empty result.\\[4pt]
+\path{workloads/world_workload.sql} & 6 & World country/city/language and aggregate coverage.\\[4pt]
+\path{workloads/testing_world.sql} & 3 & Large city keys, official-language parents, continent coverage.\\[4pt]
+\path{workloads/testing_chinook.sql} & 3 & Invoice chain, PlaylistTrack composite key, genre coverage.\\[4pt]
+\path{workloads/testing_employees.sql} & 3 & Bounded salary/assignment details and current department groups.\\[4pt]
+\path{workloads/testing_diamonds.sql} & 2 & Ideal-cut detail records and cut groups; text-safe filtering.\\[4pt]
+\path{workloads/testing_taxis.sql} & 2 & Credit-card detail records and pickup-borough groups.\\\bottomrule
+\end{longtable}
+
+Queries in testing\_*.sql use unqualified table names and are intended to run as declared workloads. CSV table names assume a single original-named file import; replace them using dataset.json after renaming or folder imports. Manual LEFT JOIN orphan checks in README are deliberately separate, because outer joins are outside the workload subset.
+
+\section{A query test in plain language and SQL}
+\plain{A retained invoice line should still know which invoice, customer and track it belongs to. This test exercises that chain and asks which matching rows remain.}
+\begin{lstlisting}[language=SQL]
+SELECT il.InvoiceLineId, i.InvoiceId, c.CustomerId,
+       t.TrackId, il.Quantity
+FROM InvoiceLine il
+JOIN Invoice i ON il.InvoiceId = i.InvoiceId
+JOIN Customer c ON i.CustomerId = c.CustomerId
+JOIN Track t ON il.TrackId = t.TrackId
+WHERE c.Country = 'USA';
+\end{lstlisting}
+The detail values in retained result tuples should match their source values. Fewer tuples are expected in a slice. A nonempty result indicates survival; the multiset intersection ratio describes how many original answer rows remain. Neither measure alone proves all business behavior.
+
+\chapter{How row selection works}
+\section{The hard budget and dependency closure}
+Let $N$ be the sum of exact source table counts and $p$ the percentage. CLI/benchmark budgets use
+\[
+B=\max\!\left(1,\left\lfloor N\frac{p}{100}\right\rfloor\right),\qquad 1\leq p\leq100.
+\]
+The selector library also accepts a nonnegative integer row budget, including zero. Preview displays zero for an empty input. The limit is a total row count, not bytes, rows per table or a soft target.
+
+For a candidate row set $X$, let $C(X)$ include $X$ and all required parents recursively. If $S$ is already selected, the actual added cost is
+\[
+\Delta(X\mid S)=|C(X)\setminus S|.
+\]
+Accept the candidate only when $|S|+\Delta(X\mid S)\leq B$. Already selected parents are not charged again. An unused remainder is valid if no remaining candidate closure fits.
+
+\begin{figure}[htbp]\centering\includegraphics[width=\linewidth]{assets/closure.pdf}\caption{Explanatory four-record closure, not a measured dataset. Selecting the OrderLine requires its Order, Customer and Product.}\end{figure}
+With an empty selection this line costs four records. A budget of three rejects it. A budget of four can accept it. Another line with the same already-kept parents can cost only one extra record; two selected child rows do not necessarily cost two complete parent chains.
+
+\section{Candidate sampling and scalability}
+\plain{Instead of loading every record identifier into Python, the app considers a bounded pool and tries to avoid expensive scans where keys allow it.}
+\technical{Candidate pool size targets $C=\min(N,\max(B,\lceil1.25B\rceil))$. Each nonempty table gets approximately its row-count proportion, rounded upward with at least one key; those per-table minimums can increase the combined pool beyond the nominal target. Tables reuse exact verified counts when available.}
+
+Dense single integer keys may use uniform rejection guesses followed by indexed membership checks. The fast path requires \path{sample_size}$\times4<$ table rows and a key range at most four times the row count; it bounds attempts and falls back to streaming. Sparse, noninteger and composite keys use an exact seeded reservoir over keys ordered by the full PK. FK values are prefetched in batches rather than one lookup per selected row.
+
+The algorithm still performs full-source content fingerprinting for pipeline evidence and may stream full PK indexes for reservoir sampling. ``Bounded candidate memory'' therefore does not mean ``no full database reads'' or ``constant total runtime''.
+
+\section{Method 1: random-repair}
+\plain{Shuffle candidate records, then include each one's required parent records if the whole addition fits.}
+\technical{The baseline samples candidates, shuffles with random.Random(seed), computes incremental closure and merges accepted rows. Repair is budget-aware at selection time. It does not blindly select a budget of children and then exceed the budget by adding parents.}
+
+\section{Method 2: referential}
+\plain{Walk the table relationships from parents toward children, randomly choosing records within that order.}
+\technical{This baseline uses a topological parent-first table order and seeded within-table choices with the same dependency closure and feasibility rules. It does not read workload weights. Spending the budget early on parent tables can leave few useful child rows for a specific workload.}
+
+\section{Method 3: workload-aware}
+\plain{First try real records that make your queries useful. Then use the remaining space on tables that the declared workload references more heavily.}
+\technical{Usable queries produce bounded PK witnesses from their actual FROM, JOIN and WHERE clauses. Query IDs explicitly required by acceptance are visited first in each round. Witnesses are traversed round-robin so one query does not consume all witness space first. Missing-parent closure is prefetched in groups of 64 witnesses and charged incrementally.}
+
+Each query's witness limit is
+\[
+L=\min\left(1000,\max\left(1,\left\lfloor B/\max(1,Q)\right\rfloor\right)\right),
+\]
+where $Q$ is the number of usable queries. Remaining sampled candidates receive a static table priority, are shuffled for seeded tie-breaking and visited by descending priority buckets. Candidates are accepted only if their incremental required closure fits.
+
+\section{Actual numeric scoring constants}
+For each supported, usable query, the implementation adds:
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{.63\linewidth}>{\RaggedRight\arraybackslash}p{.29\linewidth}}
+\toprule\textbf{Detected feature} & \textbf{Contribution}\\\midrule\endhead
+Every referenced table & $+2.0$ to that table\\[4pt]
+Detected join pairs & $+0.5$ per pair to the first referenced table\\[4pt]
+Each detected filter column & $+1.0$ to its resolved table\\[4pt]
+Each detected grouping column & $+1.5$ to its resolved table\\[4pt]
+Any grouping or aggregate in the query & $+1.0$ to the first referenced table\\[4pt]
+Table not otherwise weighted & Default weight $1.0$\\\bottomrule
+\end{longtable}
+These are fixed heuristic coefficients in sampler.py, not learned parameters, measured feature importances or user-tuned model weights. A one-table query with one detected filter and no aggregation contributes $2+1=3$. With a grouping column and aggregation, further resolved group and first-table contributions apply.
+
+\reviewpoint{There is no current ``query gain divided by full closure cost'' optimizer here. The implementation uses bounded real witnesses, static table priorities and exact incremental feasibility. Do not describe it as solving an optimal minimum subset, HAVING satisfiability or general query equivalence.}
+
+\section{Complexity and practical limits}
+Let $T$ be table count and $C$ the sampled candidate count. The static priority bucket ordering costs $O(C+T\log T)$ after weights and sampling, rather than sorting every candidate by a recomputed closure ratio. Dependency traversal, database I/O, exact result comparison and full-source fingerprinting add their own costs. Memory holds sampled candidates, selected keys, caches and bounded batches; a large dependency closure can still be expensive. No method is guaranteed to fill every row slot or outperform the others.
+\source{src/safeslicesql/sampler.py; src/safeslicesql/dependency_graph.py; src/safeslicesql/workload_candidates.py}
+
+\chapter{Parameters and function contracts}
+\section{User controls and defaults}
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{.26\linewidth}>{\RaggedRight\arraybackslash}p{.24\linewidth}>{\RaggedRight\arraybackslash}p{.42\linewidth}}
+\toprule\textbf{Parameter} & \textbf{Default / range} & \textbf{Effect}\\\midrule\endhead
+Input kind & mysql/csv/folder/xlsx & Select an existing schema or text-preserving file-import path.\\[4pt]
+Desktop budget & 10; 1--100\% & Hard total-row maximum including required parent rows.\\[4pt]
+Method & Desktop: workload-aware & One of random-repair, referential, workload-aware; CLI run requires a method.\\[4pt]
+Seed & 42 & Deterministic choices on unchanged data with the same code/backend semantics.\\[4pt]
+Custom workload & None in desktop request & Overrides generated structural workload. CLI default is workloads/workload.sql, with source-specific fallback where present; auto generates SQL.\\[4pt]
+Compare & False & Run all three methods; the same target is refreshed per run and retains the last successful committed copy.\\[4pt]
+Minimum query survival & Desktop 1.0; CLI/library 0.0 & Fraction 0--1 internally. Positive threshold also requires an eligible query denominator.\\[4pt]
+Minimum exact retention & 0.0 & Average exact result-row retention threshold, not physical row percentage.\\[4pt]
+Required query IDs & Empty tuple/list & Every named query must exist, be supported, execute and survive. Statement order defines Q1, Q2, etc.\\[4pt]
+Dry run & False & CLI selects only, without constructing or touching the target.\\\bottomrule
+\end{longtable}
+
+\section{Runtime limits from the public template}
+Environment keys have the prefix \path{SAFESLICE_LIMIT_}. All values must be positive integers. Byte limits use actual bytes, not decimal MB.
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{.46\linewidth}>{\RaggedRight\arraybackslash}p{.19\linewidth}>{\RaggedRight\arraybackslash}p{.27\linewidth}}
+\toprule\textbf{Suffix} & \textbf{Default} & \textbf{Meaning}\\\midrule\endhead
+JOB\_SECONDS & 600 & Whole cooperative job deadline\\[4pt]
+STATEMENT\_SECONDS & 30 & Eligible SELECT/lock/progress timeout\\[4pt]
+CONNECT\_SECONDS & 10 & MySQL connect timeout\\[4pt]
+MAX\_SOURCE\_ROWS & 5,000,000 & Total source-row guard\\[4pt]
+MAX\_RESULT\_ROWS & 1,000,000 & Rows streamed per query\\[4pt]
+MAX\_INPUT\_BYTES & 104,857,600 & 100 MiB input / expanded XLSX guard\\[4pt]
+MAX\_CELL\_BYTES & 1,048,576 & 1 MiB per imported cell\\[4pt]
+MAX\_TEMP\_BYTES & 536,870,912 & 512 MiB temporary comparison database\\[4pt]
+MAX\_MEMORY\_BYTES & 1,073,741,824 & 1 GiB client process RSS guard\\[4pt]
+MAX\_TABLES & 100 & Reflected/imported table limit\\[4pt]
+MAX\_COLUMNS & 500 & Per-table columns, including generated CSV ID\\\bottomrule
+\end{longtable}
+
+Memory is sampled at checkpoints, not continuously; a native allocation may exceed a limit before the next check. MySQL eligible SELECT execution time, lock waits and socket timeouts are distinct controls. The socket read/write timeout is statement seconds plus five. These are cooperative bounds, not an OS-level quota or a supported-capacity certificate. Restart the desktop after editing its environment settings.
+
+\section{Important internal batch and guard values}
+The candidate multiplier is 1.25; decision log limit is 1,000 entries; witness prefetch is 64; per-query witness cap is 1,000; FK prefetch default is 5,000 keys; materialization and file import use 500-row batches; automatic large-table example queries cap ordered results at 1,000 or the smaller runtime cap. The target lock waits up to five seconds. Record searches allow 25 rows from each side and a maximum query text length of 500 characters. Scale RSS sampling uses a 0.05-second interval.
+
+\section{Core function contracts}
+The full exact API appendix follows later; the most useful contracts to understand first are:
+\begin{description}[style=nextline,leftmargin=1.5em,labelindent=0pt]
+\item[\texttt{prepare\_dataset()}] Takes exactly one input mode, creates owned schemas when needed and returns PreparedDataset with source/target configs, workload path, table counts and manifest. Success retains schemas for later inspection; failure attempts scoped cleanup.
+\item[\texttt{inspect\_schema()}] Returns SchemaMetadata. Optional same-view counts avoid redundant counting. Reflection/count failure is an error, not an empty table.
+\item[\texttt{build\_dependency\_graph()}] Returns DependencyGraph with parent-to-child edges and self-reference tracking.
+\item[\texttt{analyze\_workload()}] Returns WorkloadAnalysis containing QueryInfo entries and support/error status. Main pipeline setup supplies False and evaluates later.
+\item[\texttt{select\_rows()}] Returns SelectionResult with the selected keys, their total count, added-parent count, rejected-candidate count and bounded decision log. Workload-aware requires a usable workload. The library default method differs from the desktop request default.
+\item[\texttt{compute\_closure()}] Returns ClosureResult with selected rows and added dependencies. satisfied excludes rows already paid for; stop\_after limits work when the remaining budget cannot fit.
+\item[\texttt{materialize\_subset()}] Returns GenerationResult. It can return a failed result after rollback; pipeline checks success before claiming a committed copy. The callback is the in-transaction quality checkpoint.
+\item[\texttt{evaluate\_workload()}] Returns WorkloadReport with per-query QueryResult records and workload averages. It distinguishes unsupported syntax, execution failures and known source-empty results.
+\item[\texttt{validate\_subset()}] Returns ValidationReport. A full snapshot supports unchanged-content evidence. An unchanged count alone leaves source\_unchanged unverified.
+\item[\texttt{run\_pipeline()}] Returns BenchmarkRunResult joining selection, generation, validation, workload, acceptance, timings and success/error state. It does not omit evidence merely because an experiment failed.
+\item[\texttt{run\_benchmark()}] Returns BenchmarkResults for the matrix, with total/successful/failed run counts and CSV/summary/plot artifacts.
+\end{description}
+
+\section{How results travel through the program}
+\begin{lstlisting}[language=Python]
+CopyRequest
+  -> PreparedDataset + run.yaml
+  -> SchemaMetadata + DependencyGraph + WorkloadAnalysis
+  -> SelectionResult
+  -> GenerationResult (pending until checks pass)
+  -> WorkloadReport + ValidationReport + AcceptanceReport
+  -> BenchmarkRunResult
+  -> BenchmarkResults / CopyOutcome
+  -> CSV + JSON + charts + readable report
+\end{lstlisting}
+The data contracts live in types.py and the acceptance, desktop-service and input-preparation modules. In particular, success, is\_valid, acceptance.passed and a saved summary's ready flag answer related but different questions. Always read the recorded error fields before explaining a failed or historical result.
+
+\chapter{Metrics: formulas, meanings and edge cases}
+\section{Integrity metrics}
+\plain{First ask whether the smaller copy is a legal and faithful selection of records. This is independent from how many query answers it keeps.}
+\begin{itemize}
+\item \textbf{PK uniqueness:} no duplicate tuple across all declared primary-key columns.
+\item \textbf{FK violations:} non-null retained child references without a matching retained parent. Zero is required; the total can count violations of separate relationships, not necessarily unique bad child rows.
+\item \textbf{Budget compliance:} actual rows across every target table do not exceed $B$.
+\item \textbf{Schema compatibility:} expected tables, columns, PK/FK definitions, unique/check constraints and indexes match reflected source definitions.
+\item \textbf{Copied-value equality:} materialization compares every inserted batch back to the source; read-only evidence actions can check current copied records again.
+\item \textbf{Source unchanged:} True/False/None. None means history is unverified; it must not be described as verified unchanged.
+\end{itemize}
+ValidationReport.is\_valid requires unique PKs, zero FK violations, a compliant budget, compatible schema, no missing tables or check errors, and source\_unchanged not False. It permits None as structural validity with unverified history. The normal pipeline provides a baseline; standalone CLI validation does not recreate past history.
+
+\section{Query survival}
+For supported queries, a query survives when source and target both return at least one row. Let $E$ be eligible supported queries: known nonempty source results plus failures where the source result is unknown. Known source-empty queries are excluded from this denominator.
+\[
+\operatorname{survival}=\frac{\#\{q\in E: q\text{ survives}\}}{|E|}.
+\]
+When $|E|=0$, the stored rate is 0.0. An execution error remains a failed measurement; unsupported syntax is instead excluded with a reason. A positive minimum survival gate rejects a workload that cannot demonstrate eligible survival.
+
+\textbf{Subtle example:} SELECT COUNT(*) returns one row even if the underlying table has zero records. It can therefore survive while its numeric answer changes. Query survival measures nonempty returned results, not semantic equivalence or a promise that all selected tables contain data.
+
+\section{Exact result-row retention}
+Let $m_S(v)$ and $m_T(v)$ be the multiplicities of typed output tuple $v$ in source and target results. For a nonempty source result,
+\[
+R_{\mathrm{row}}=\frac{\sum_v\min\{m_S(v),m_T(v)\}}{\sum_v m_S(v)}.
+\]
+This is multiset intersection, so duplicates count correctly. Output columns are compared by ordinal position, preserving duplicate column labels. Type names and string representations encode driver-returned values; ordering is ignored. This is not approximate similarity, sampled comparison or equality of just the first few rows.
+
+\section{Key retention and grouping retention}
+\textbf{Key retention} is the fraction of distinct declared projected source key tuples still present in the target result. It uses PK lineage and aliases, not a column-name suffix such as ``id''. If a safe key mapping is unavailable, the implementation falls back to exact row retention.
+
+\textbf{Aggregate retention} normally measures the survival of distinct projected grouping-key tuples, when every grouping expression can be mapped safely to an output position. It measures \emph{group coverage}, not closeness of SUM, AVG or COUNT values. A scalar aggregate or unprojected/ambiguous group falls back to exact row retention.
+
+For example, North and South might both remain after slicing, so group coverage can be 100 percent, while both revenue totals decrease. An unchanged invoice's stored total need not equal the sum of its retained line items because not all children are required by retaining a parent.
+
+\section{Workload averages, failures and empty outputs}
+Overall key, row and aggregate retention are arithmetic means across all supported queries, not weighted by result-set row count. Unsupported queries are not in those means. Failed supported evaluations contribute zero. If source and target are both empty, each retention score is 1.0, survival is False and that query is excluded only from the survival denominator. If a source query fails and no successful baseline proves it empty, it remains an unknown-source failure in the survival denominator.
+
+Reports expose total, supported, excluded, failed, known source-nonempty, source-unknown and survival-denominator counts. Those counts are essential for assessing a percentage. A high score from one trivial aggregate should not hide excluded critical SQL.
+
+\section{Selection diagnostics and size reduction}
+Selection reports \path{total_selected}, \path{closure_additions} and \path{rejected_candidates}. Closure additions are additional parent records attributed during selection, not a separate new row budget. A rejection means an attempted closure could not fit; it is not itself an FK violation. The physical retained fraction is \path{actual_rows}/$N$, and row reduction is $1-\text{actual\_rows}/N$ when $N>0$. Neither should be confused with average query result retention.
+
+\section{Timing and benchmark statistics}
+The run-level total is the sum of recorded preflight, selection, materialization, workload-evaluation and validation timings. Materialization timing subtracts the nested before-commit evaluation/validation timings to avoid double-counting. CLI runs add their initial source setup cost to preflight. Benchmark matrices share an initial source setup outside individual trial timing, so a per-trial runtime is not the wall time of launching the entire experiment suite.
+
+Per-query source/target execution times include connection/query fetching/streaming; temporary-store ingestion/comparison times are recorded separately and subtracted from those fetch timings. Export, charts, UI rendering and connection setup outside the timed stages are not automatically included in an individual stage total.
+
+Benchmark summaries group by method and budget. They report attempted/successful/failed counts, then calculate mean, sample standard deviation and observation count using only successful measured runs. Missing metrics stay missing. One successful run has no sample standard deviation; an all-failed group has no valid performance mean. Fewer failed runs can matter more than a faster mean from the survivors.
+
+\section{What metrics are absent}
+No classification accuracy, precision/recall/F1, learned loss, numerical aggregate-error percentage, universal query-equivalence proof or total MySQL server resource profile is implemented as a standard project metric. Do not add these names to a review slide as if the software measured them. If needed, design and label an additional experiment separately.
+\source{src/safeslicesql/validator.py; src/safeslicesql/result_store.py; src/safeslicesql/types.py; src/safeslicesql/benchmark.py}
+
+\input{measured-evidence.tex}
+
+\chapter{Safety, recovery and operational boundaries}
+\section{What protects the original and the last valid copy}
+\plain{The original is read, the output is separate, and a failed replacement should not wipe out an earlier valid output.}
+\technical{Actual connected identity checks prevent source=target even through MySQL hostname aliases. Read-only sessions are installed on app-created source engines. Schema reproduction rejects unrelated target tables, pre-existing target triggers and incompatible definitions before writes. DML refresh uses one transaction, and acceptance failure rolls it back. A MySQL named lock or SQLite file lock coordinates participating SafeSliceSQL writers.}
+
+These controls do not prevent arbitrary external target writers or concurrent DDL; use a dedicated target and avoid schema changes during a run. Creating an arbitrary SQLAlchemy engine outside \path{bounded_engine()} does not install its event hooks automatically.
+
+\section{Journal state and interruption}
+Jobs record running phases and terminal outcomes such as completed, failed, rejected or interrupted. A cancellation uses a dedicated interruption exception that unwinds transactions. If a process dies, recovery verifies owner/host/process identity before marking its running job interrupted. It does not approve, resume or complete partially executed SQL.
+
+Cancellation before commit restores previous target rows; cancellation arriving after commit cannot undo a successful commit. A pending schema creation intent without a confirmed ownership record is not automatically deleted. That distinction prevents cleanup from guessing at ownership after a hard crash.
+
+\section{Credentials and deployment}
+Source and target accounts should have separate least-privilege roles. The public grant script is an administrator-reviewed example and is never automatically executed. Prefix-grant behavior depends on MySQL partial-revoke configuration and correct escaping; exact schema grants may be needed.
+
+Passwords may come from private environment values, a private secret file or an approved native OS vault. Explicit references that cannot be read fail rather than silently falling back. Logs redact registered secrets and suppress SQL/bound-value text in public database errors. Reports can still contain input paths, schema names and workload literals, and copied rows contain original data.
+
+\reviewpoint{The project is not a PII masker, encryption system, remote authentication service or multi-user authorization platform. Its current strengths are checked subsetting, transaction-aware quality gates, reproducibility and inspectable evidence.}
+
+\section{Ownership-aware cleanup}
+\begin{lstlisting}[language={}]
+safeslice jobs list
+safeslice jobs recover
+safeslice jobs cleanup --days 7
+\end{lstlisting}
+Cleanup verifies the terminal job belongs to the current local user/host, the schema name exactly matches an owned generated pattern, the recorded server UUID matches, and the retention age is satisfied. It keeps report files. It does not drop arbitrary named CLI targets or a user-selected original source. These local ownership checks are accident prevention, not tamper-proof authentication against a person who can edit the job files.
+
+\chapter{Runbook: demonstrate and verify the whole project}
+\section{Start the desktop}
+Open PowerShell in the checkout. The virtual environment and environment file already exist locally; another machine must complete README installation first. A running MySQL server is required for desktop inputs, including CSVs.
+\begin{lstlisting}[language={}]
+cd C:\Users\saivi\Projects\SafeSliceSQL
+.\demo.bat
+\end{lstlisting}
+If the window fails to open, launch with the console interpreter to see diagnostics:
+\begin{lstlisting}[language={}]
+.\.venv\Scripts\python.exe -m safeslicesql.desktop
+\end{lstlisting}
+Select Diamonds CSV for a source above 5,000 rows, set 10 percent, choose \path{testing_diamonds}.sql in Options and create the copy. Expect at most 5,394 copied rows. Inspect Results, Verify my copy, charts and an exported report. To demonstrate FK preservation, use World or Chinook after importing the matching MySQL dump and choose its matching SQL workload.
+
+\section{CLI: inspect, preview, copy and validate}
+Use a dedicated disposable target created in MySQL for CLI runs. Replace connection details in the private environment file; do not paste passwords into shell examples. The commands below use an activated environment or the installed safeslice entry point.
+\begin{lstlisting}[language=SQL]
+CREATE DATABASE IF NOT EXISTS world_review_slice;
+\end{lstlisting}
+\begin{lstlisting}[language={}]
+safeslice inspect --database world
+
+safeslice run --method workload-aware --budget-percent 20 --seed 42 --source world --target world_review_slice --workload workloads/testing_world.sql --dry-run
+
+safeslice run --method workload-aware --budget-percent 20 --seed 42 --source world --target world_review_slice --workload workloads/testing_world.sql --min-query-survival 1.0 --required-query Q2 --output-dir results/manual-review
+
+safeslice validate --source world --target world_review_slice --budget-limit 1060 --workload workloads/testing_world.sql
+\end{lstlisting}
+The --budget-limit on standalone validation must be the experiment's row budget. Without it the CLI defaults to the full current source size; that would not demonstrate compliance with the requested 20-percent slice. A standalone validate result also cannot reconstruct source history at creation time. If an explicit acceptance threshold rejects, inspect the recorded reason and adjust the workload/budget for a new run.
+
+\section{A reproducible comparison}
+Choose the same input, declared workload, percentage and seeds for every method. The checked-in World YAML requests 18 experiments; the SQLite example requests 27. Review source/target configuration and output paths first.
+\begin{lstlisting}[language={}]
+safeslice benchmark --config benchmarks/benchmarks_world.yaml
+\end{lstlisting}
+The target is refreshed for each run. Per-query CSVs explain exclusions, errors and lost results; raw combined CSVs retain failed attempts. Summaries and charts include successful measurement counts and missing standard deviations honestly. Do not describe the target left after comparison as a merged copy from every strategy.
+
+\section{Validation and scale checks}
+\begin{lstlisting}[language={}]
+python -m pytest -m "not db" -q --tb=short
+python -m ruff check .
+safeslice selftest --cases 5 --rows 100 --seed 42
+safeslice scalecheck --rows 1000 --rows 5000 --seed 42 --cases 5
+\end{lstlisting}
+Use --mysql only on a disposable test server with permission to create/delete uniquely named test schemas. The scalecheck row setting is a bound per generated table; evidence.json records actual total rows by case. CI configures these checks, but a configured workflow is not proof that a hosted run passed.
+
+\section{Five-minute demonstration sequence}
+\begin{enumerate}
+\item Explain the source, workload and hard total-row budget. Show exact input preview counts.
+\item Show one child-parent relationship and why retaining the child requires the parent.
+\item Run the slice with a fixed seed and an explicit quality threshold.
+\item Show actual row count versus allowed budget and zero FK violations.
+\item Inspect a copied record beside its original, then follow its parent connection.
+\item Show per-query survival and exact retention, including a changed aggregate.
+\item Export the report and identify its recorded timestamp. If showing a saved report, say that it is saved evidence.
+\end{enumerate}
+
+\chapter{What to highlight in a project review}
+\section{The strongest defensible story}
+\begin{enumerate}
+\item \textbf{Problem and invariant:} a useful smaller relational database must preserve required parents while staying within a hard budget.
+\item \textbf{Shared baseline framework:} random-repair, referential and workload-aware selectors use the same closure, budget enforcement, materializer, validator and metrics. This makes comparisons more interpretable.
+\item \textbf{Workload-aware contribution:} real filter/join witnesses are considered first; table features prioritize remaining candidates; closure cost is checked incrementally.
+\item \textbf{Correctness before commit:} copied-value checks, structural checks and workload acceptance happen before the target DML transaction commits.
+\item \textbf{Clear metrics:} survival, exact row retention, key retention and grouping coverage measure different things and expose errors/exclusions.
+\item \textbf{Engineering completeness:} desktop/CLI share the core, imports support unfamiliar input, jobs are journaled, stops unwind safely and saved evidence is inspectable.
+\item \textbf{Evidence with boundaries:} fresh tests, recorded MySQL scale checks and historical method comparisons are distinguished; the heuristic is not claimed to always win.
+\end{enumerate}
+
+\section{Likely questions and clear answers}
+\begin{description}[style=nextline,leftmargin=1.5em,labelindent=0pt]
+\item[Why not choose a random 10 percent of every table?] Independent sampling can create orphan records. Required parent closure must be included and charged to the same total budget.
+\item[Does preserving relationships preserve every SQL answer?] No. It prevents missing required parents, but child rows, groups and aggregate inputs may be omitted. The workload is measured separately and can be gated.
+\item[Is workload-aware selection a learned model?] No. It is a seeded heuristic with actual query witnesses and fixed coefficients. No training dataset or learned parameters exist.
+\item[Why use three methods?] Two baselines help test whether the proposed priority actually improves the declared workload under matched conditions. A fair experiment is allowed to show a baseline winning.
+\item[What if a child needs too many parents?] Its incremental closure is rejected if it cannot fit. The algorithm may leave unused space rather than exceed the budget or break a dependency.
+\item[Can a composite primary key be used?] Yes. Every key column participates in identity, lookup and ordering. Composite foreign keys remain unsupported.
+\item[Why is CSV different from MySQL input?] CSV has no declared relational schema. The import preserves text and adds IDs; use an existing MySQL schema to test real types and FKs.
+\item[Is 100-percent survival enough?] No. COUNT can return a row while its value changes, and excluded queries need inspection. Review exact retention, grouping coverage, query errors and required IDs too.
+\item[Can rollback undo schema creation?] MySQL DML rollback protects previous row contents. DDL is not transactional; handled cleanup is scoped, and hard crashes may leave schema remnants.
+\item[How big a database can it handle?] A configurable source limit is not capacity evidence. Cite actual recorded rows, backend, timing and client RSS, then test representative schemas before promising a size.
+\end{description}
+
+\section{Limitations and sensible next experiments}
+Present the supported schema/SQL subset explicitly. Expand current-version benchmark seeds and real application workloads; include failure rates and end-to-end setup cost. Test the selected large downloads end to end before certifying them. If numerical aggregate accuracy matters, define and implement a separate metric. More sophisticated marginal-gain selection, cyclic/composite-FK support, masking and multi-user service controls would be future work, not hidden current features.
+
+\reviewpoint{A strong review explains the actual implementation, demonstrates both a kept relationship and a changed query answer, cites measured evidence, and states limitations without inventing guarantees.}
+
+\addtocontents{toc}{\protect\setcounter{tocdepth}{0}}
+\appendix
+\input{file-atlas.tex}
+\input{supporting-files.tex}
+\input{function-reference.tex}
+\input{coverage.tex}
+\end{document}

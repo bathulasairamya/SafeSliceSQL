@@ -1,0 +1,135 @@
+\chapter{Review coverage and provenance}
+
+Review baseline: \path{ac58c45a8b7d34c948e39332f2ad157f241edbbc}. The inventory contains 45 application Python modules, 28 behavioral test modules plus two test support files, and 28 non-application/supporting tracked entries; 103 tracked files in total. The application API index covers 255 module/class functions (nested callbacks excluded). Source files were parsed for definitions, signatures, imports, data fields and hashes; core execution/metrics/transaction code and local evidence were inspected directly. This is a workflow explanation, not a formal security certification.
+
+Private .env content, database passwords and raw production records are intentionally absent. Third-party dump payloads, installed environments, cached bytecode, build copies and 1,100-plus generated run artifacts are described by their role and selected provenance rather than reproduced as application source.
+
+\section{File coverage manifest}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.598\linewidth}>{\raggedright\arraybackslash}p{0.322\linewidth}}
+\toprule
+\textbf{Tracked path} & \textbf{Where explained} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Tracked path} & \textbf{Where explained} \\
+\midrule
+\endhead
+.env.example & Supporting-file atlas \\[4pt]
+.github/workflows/ci.yml & Supporting-file atlas \\[4pt]
+.gitignore & Supporting-file atlas \\[4pt]
+README.md & Supporting-file atlas \\[4pt]
+Terminal Demo.bat & Supporting-file atlas \\[4pt]
+benchmarks/benchmarks.yaml & Supporting-file atlas \\[4pt]
+benchmarks/benchmarks\_world.yaml & Supporting-file atlas \\[4pt]
+datasets/.gitignore & Supporting-file atlas \\[4pt]
+datasets/README.md & Supporting-file atlas \\[4pt]
+datasets/manifest.json & Supporting-file atlas \\[4pt]
+demo.bat & Supporting-file atlas \\[4pt]
+docs/operations.md & Supporting-file atlas \\[4pt]
+docs/technical.md & Supporting-file atlas \\[4pt]
+examples/demo-orders.csv & Supporting-file atlas \\[4pt]
+pyproject.toml & Supporting-file atlas \\[4pt]
+requirements-demo-windows-py310.txt & Supporting-file atlas \\[4pt]
+requirements.txt & Supporting-file atlas \\[4pt]
+scripts/create\_1pct\_targets.sql & Supporting-file atlas \\[4pt]
+scripts/generate\_plots.py & Supporting-file atlas \\[4pt]
+scripts/least\_privilege\_mysql.sql & Supporting-file atlas \\[4pt]
+scripts/seed\_sqlite\_db.py & Supporting-file atlas \\[4pt]
+src/safeslicesql/\_\_init\_\_.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/acceptance.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/automatic\_workload.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/benchmark.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/cli.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/commands.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/config.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/connection\_scope.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/copy\_evidence.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/dataset\_input.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/db.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/demo.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/dependency\_graph.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/desktop.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/desktop\_service.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/experiment\_config.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/friendly\_report.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/input\_picker.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/input\_preview.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/jobs.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/logging\_config.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/pipeline.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/plots.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/record\_browser.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/reporting.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/result\_store.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/result\_views.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/runtime.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/sampler.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/saved\_results.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/scale\_check.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/schema\_analyzer.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/schema\_compatibility.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/security.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/source\_snapshot.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/sql\_lexer.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/subset\_generator.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/synthetic.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/target\_lock.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/types.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/user\_errors.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/validator.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/view\_tasks.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/workload\_analyzer.py & Application file atlas and API appendix \\[4pt]
+src/safeslicesql/workload\_candidates.py & Application file atlas and API appendix \\[4pt]
+tests/\_\_init\_\_.py & Supporting-file atlas \\[4pt]
+tests/conftest.py & Supporting-file atlas \\[4pt]
+tests/test\_benchmark.py & Automated test atlas \\[4pt]
+tests/test\_cli.py & Automated test atlas \\[4pt]
+tests/test\_config\_db.py & Automated test atlas \\[4pt]
+tests/test\_copy\_and\_parser\_regressions.py & Automated test atlas \\[4pt]
+tests/test\_copy\_evidence.py & Automated test atlas \\[4pt]
+tests/test\_dataset\_input.py & Automated test atlas \\[4pt]
+tests/test\_demo.py & Automated test atlas \\[4pt]
+tests/test\_dependencies.py & Automated test atlas \\[4pt]
+tests/test\_desktop.py & Automated test atlas \\[4pt]
+tests/test\_input\_picker.py & Automated test atlas \\[4pt]
+tests/test\_input\_preview.py & Automated test atlas \\[4pt]
+tests/test\_metrics\_regressions.py & Automated test atlas \\[4pt]
+tests/test\_mysql\_safety.py & Automated test atlas \\[4pt]
+tests/test\_performance\_regressions.py & Automated test atlas \\[4pt]
+tests/test\_pipeline.py & Automated test atlas \\[4pt]
+tests/test\_production\_controls.py & Automated test atlas \\[4pt]
+tests/test\_remaining\_regressions.py & Automated test atlas \\[4pt]
+tests/test\_reporting.py & Automated test atlas \\[4pt]
+tests/test\_review\_fixes.py & Automated test atlas \\[4pt]
+tests/test\_safety\_regressions.py & Automated test atlas \\[4pt]
+tests/test\_sampler.py & Automated test atlas \\[4pt]
+tests/test\_schema.py & Automated test atlas \\[4pt]
+tests/test\_smoke.py & Automated test atlas \\[4pt]
+tests/test\_subset\_generator.py & Automated test atlas \\[4pt]
+tests/test\_synthetic.py & Automated test atlas \\[4pt]
+tests/test\_user\_experience.py & Automated test atlas \\[4pt]
+tests/test\_validator.py & Automated test atlas \\[4pt]
+tests/test\_workload.py & Automated test atlas \\[4pt]
+workloads/testing\_chinook.sql & Supporting-file atlas \\[4pt]
+workloads/testing\_diamonds.sql & Supporting-file atlas \\[4pt]
+workloads/testing\_employees.sql & Supporting-file atlas \\[4pt]
+workloads/testing\_taxis.sql & Supporting-file atlas \\[4pt]
+workloads/testing\_world.sql & Supporting-file atlas \\[4pt]
+workloads/workload.sql & Supporting-file atlas \\[4pt]
+workloads/world\_workload.sql & Supporting-file atlas \\[4pt]
+\bottomrule
+\end{longtable}
+
+
+\section{Compiling and maintaining this guide}
+
+The main editable source is \path{safeslicesql-project-guide.tex}. Its appendix inputs and assets are in the same folder. XeLaTeX is recommended. The preamble also supports pdfLaTeX with Type 1 fonts and LuaLaTeX with OpenType fonts. Compile twice for the contents/references, or use Tectonic, which automatically reruns as needed:
+
+
+\begin{lstlisting}[language=]
+tectonic safeslicesql-project-guide.tex
+\end{lstlisting}
+
+
+The source bundle contains the generated atlas, exact function reference, evidence snapshot and source inventory. To update the report after code changes, refresh the inventory/evidence and re-check every claim; recompiling alone does not refresh recorded metrics. Historical source paths in the evidence appendix refer to the reviewed checkout, not data bundled into the PDF.

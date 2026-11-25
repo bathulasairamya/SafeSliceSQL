@@ -1,0 +1,827 @@
+\chapter{How the files work together}
+
+Each file below is explained through a real handoff. Read the job first, then what arrives, what changes and what leaves. The example connects it to the shop. Function names are signposts for later code reading, not terms to memorize before understanding the role.
+
+All paths in this chapter start inside src/safeslicesql/. The separate technical companion contains exact signatures, helper methods, defaults and source line references.
+
+\section{Start a run and read its settings}
+
+\Needspace{11\baselineskip}
+
+\subsection{desktop.py}
+
+\textbf{Its job:} The window you interact with.
+
+\textbf{What arrives.} Your clicks, selected input, percentage, method and other settings.
+
+\textbf{What it does.} It builds the screens, requests an input preview, starts a background copy job and updates the visible progress. A background job lets the window remain usable while database work runs. The window also offers history, verification and result actions.
+
+\textbf{What leaves.} A checked instruction request passed to the desktop service, followed by a visible result or actionable error.
+
+\textbf{Connect it to the example.} You choose the shop database and a 50-percent cap. This file collects those choices; it does not independently decide which sale lines should be kept.
+
+\textbf{Where the work goes next.} It calls \path{desktop_service} for the copy and \path{result_views} for result windows. main() is the desktop start point.
+
+\textbf{Names to find in the code.} Desktop.\_run() starts the user-request flow; Desktop.\_poll() brings worker messages back to the interface.
+
+\Needspace{11\baselineskip}
+
+\subsection{desktop\_service.py}
+
+\textbf{Its job:} Turn window choices into an experiment.
+
+\textbf{What arrives.} The request form, connection configuration, a new report folder and a progress callback.
+
+\textbf{What it does.} It validates the request, prepares input and a separate target, writes experiment settings, opens connections and calls the shared benchmark runner. Even a desktop run with one selected method uses that common runner. Connections are closed when the operation ends.
+
+\textbf{What leaves.} A CopyOutcome containing the request, prepared input, run results and output folder.
+
+\textbf{Connect it to the example.} The shop request becomes a concrete job with a six-row budget, a workload path and a target name. A successful-looking screen still depends on the returned checks.
+
+\textbf{Where the work goes next.} It joins \path{dataset_input}, \path{experiment_config}, benchmark and \path{saved_results} under runtime and job-journal controls.
+
+\textbf{Names to find in the code.} \path{create_copy()} establishes the job lifecycle; \_\path{create_copy()} performs the preparation and run.
+
+\Needspace{11\baselineskip}
+
+\subsection{cli.py}
+
+\textbf{Its job:} Commands typed in a terminal.
+
+\textbf{What arrives.} Command arguments such as method, percentage, source, target, seed and workload.
+
+\textbf{What it does.} It checks command options, loads settings and starts the requested operation. Commands include inspect, run, validate, benchmark, selftest, scalecheck and job management. A dry run selects records without constructing a target copy.
+
+\textbf{What leaves.} Console explanations, exported reports and a success/failure exit status.
+
+\textbf{Connect it to the example.} A terminal user can ask for a 50-percent shop copy using the same underlying selection and validation code as the window.
+
+\textbf{Where the work goes next.} run() uses the shared pipeline. The terminal is another entrance to the project, not a different sampling implementation.
+
+\textbf{Names to find in the code.} app registers the Typer commands; run() coordinates a normal CLI slice.
+
+\Needspace{11\baselineskip}
+
+\subsection{demo.py}
+
+\textbf{Its job:} The numbered terminal menu.
+
+\textbf{What arrives.} Menu choices and editable demonstration settings.
+
+\textbf{What it does.} It lets a presenter choose actions without retyping long commands. It builds argument lists for the existing CLI, prepares selected input and records comparison choices. Cancelling a selection returns to the menu rather than treating missing input as a dataset.
+
+\textbf{What leaves.} The invoked CLI action and its saved report location, or a clear failed-action result.
+
+\textbf{Connect it to the example.} For a shop demonstration, a presenter changes the size and method in the menu, then invokes a real copy instead of a simulated screen.
+
+\textbf{Where the work goes next.} Terminal Demo.bat starts this route through cli demo. The menu reuses the same application components.
+
+\textbf{Names to find in the code.} \path{interactive_demo()} runs the menu; DemoSettings carries the current choices.
+
+\Needspace{11\baselineskip}
+
+\subsection{commands.py}
+
+\textbf{Its job:} Give terminal actions the same safety wrapper.
+
+\textbf{What arrives.} A CLI operation about to run.
+
+\textbf{What it does.} It surrounds that operation with a job record and resource-limit context. This is called a decorator: a reusable wrapper around a function. It also translates cancellation and limit stops into consistent terminal exit codes.
+
+\textbf{What leaves.} A bounded, journaled command result or an explicit stopped/failed exit.
+
+\textbf{Connect it to the example.} A shop command that reaches a configured time limit should stop through the normal cleanup path, rather than continue silently.
+
+\textbf{Where the work goes next.} It works with runtime for limits and jobs for durable local records.
+
+\textbf{Names to find in the code.} \path{bounded_command()} installs this common lifecycle around decorated CLI actions.
+
+\Needspace{11\baselineskip}
+
+\subsection{\_\_init\_\_.py}
+
+\textbf{Its job:} The package introduction and public shortcuts.
+
+\textbf{What arrives.} A Python import of the safeslicesql package.
+
+\textbf{What it does.} It declares the package version and exposes selected library operations through one package name. Re-exporting a function is like making a useful operation available from the package front door; the actual implementation remains in its owning module.
+
+\textbf{What leaves.} Version information and public references to operations such as schema inspection, selection and validation.
+
+\textbf{Connect it to the example.} A Python script may import \path{select_rows} from safeslicesql instead of naming the deeper module path.
+
+\textbf{Where the work goes next.} It connects public names to config, schema, graph, sampler, copying and validation modules.
+
+\textbf{Names to find in the code.} \_\_all\_\_ lists public exports; \_\_version\_\_ records version 0.1.0.
+
+\Needspace{11\baselineskip}
+
+\subsection{config.py}
+
+\textbf{Its job:} Read connection and application settings.
+
+\textbf{What arrives.} The environment and the selected environment-file path.
+
+\textbf{What it does.} It constructs separate source and target settings and checks missing or invalid values. A host is the server address, a port identifies the service endpoint, and a database name chooses the schema on that server. Password representation is masked.
+
+\textbf{What leaves.} AppConfig and DatabaseConfig objects: filled settings forms used by later operations.
+
+\textbf{Connect it to the example.} The shop source might be \path{shop_source} and its target \path{shop_slice}. This file keeps those roles distinct before any records are chosen.
+
+\textbf{Where the work goes next.} db uses its connection settings; security resolves configured password references.
+
+\textbf{Names to find in the code.} \path{load_config()} reads settings. DatabaseConfig.url creates the driver connection URL safely.
+
+\Needspace{11\baselineskip}
+
+\subsection{db.py}
+
+\textbf{Its job:} Connect and confirm database identity.
+
+\textbf{What arrives.} Source/target settings or a database URL.
+
+\textbf{What it does.} It creates connection engines, checks reachability and helps safely name tables. An engine manages database connections; it is not the stored data itself. Identity checks use the actual connected database, protecting against different hostnames that reach the same MySQL server.
+
+\textbf{What leaves.} Usable source/target engine handles or a connection/identity error.
+
+\textbf{Connect it to the example.} Before copying the shop, the application must ensure its target is not the very same original database under another label.
+
+\textbf{Where the work goes next.} Schema inspection, selection and copying use these handles to perform database operations.
+
+\textbf{Names to find in the code.} \path{assert_distinct_databases()} refuses source/target identity conflicts; \path{test_connection()} checks reachability.
+
+\Needspace{11\baselineskip}
+
+\subsection{security.py}
+
+\textbf{Its job:} Handle passwords and safe error messages.
+
+\textbf{What arrives.} Configured environment passwords, secret-file references or native OS-vault references.
+
+\textbf{What it does.} It resolves the chosen credential source and registers secrets for redaction. Redaction means removing a sensitive value from a displayed message. Explicit unreadable references fail instead of quietly choosing a different password. Public database errors omit SQL parameters and bound record values.
+
+\textbf{What leaves.} A usable credential for the connection, or a sanitized error.
+
+\textbf{Connect it to the example.} A failed shop login should tell you to check connection settings without printing your password beside the error.
+
+\textbf{Where the work goes next.} config requests credentials; logging and UI error handling use sanitized messages.
+
+\textbf{Names to find in the code.} credential() resolves a password; \path{safe_error()} prepares an error suitable for ordinary display.
+
+\Needspace{11\baselineskip}
+
+\subsection{logging\_config.py}
+
+\textbf{Its job:} Write useful diagnostics.
+
+\textbf{What arrives.} Configured logging level and log folder, plus messages from application stages.
+
+\textbf{What it does.} It sets up console and rotating file logging. A log is a diagnostic history of events; rotation prevents one file from growing forever. A filter removes registered secrets from messages before they are shown or written.
+
+\textbf{What leaves.} Readable progress/error messages and diagnostic log files.
+
+\textbf{Connect it to the example.} If a shop run fails during copying, logs help locate the phase. They do not replace the CSV evidence about which checks passed.
+
+\textbf{Where the work goes next.} Most modules use the project logger. Configuration chooses how much detail is written.
+
+\textbf{Names to find in the code.} \path{setup_logging()} installs handlers and redaction filtering.
+
+\section{Choose and prepare the input}
+
+\Needspace{11\baselineskip}
+
+\subsection{input\_picker.py}
+
+\textbf{Its job:} Help the user choose an input.
+
+\textbf{What arrives.} A request to browse files/folders or discover source databases.
+
+\textbf{What it does.} It opens the appropriate picker or lists usable database names, excluding system schemas. It handles cancellation as cancellation. Choosing a file here does not yet import it or make a copy.
+
+\textbf{What leaves.} The selected file path or database name, or no selection.
+
+\textbf{Connect it to the example.} The shop database name chosen in a menu becomes a source choice for later preparation.
+
+\textbf{Where the work goes next.} The menu and desktop discovery routes use it before preview/preparation.
+
+\textbf{Names to find in the code.} \path{pick_input()} selects a source; \path{available_databases()} returns user-facing database choices.
+
+\Needspace{11\baselineskip}
+
+\subsection{input\_preview.py}
+
+\textbf{Its job:} Show the input size before copying.
+
+\textbf{What arrives.} An input kind and selected path/database name with the needed configuration.
+
+\textbf{What it does.} It reads files without importing them, or inspects a source database read-only. It counts rows/columns, validates widths and limits, and returns warnings. Its budget calculation follows the copy percentage rounding, with zero displayed for empty input.
+
+\textbf{What leaves.} An InputPreview: table names, row/column counts and warnings.
+
+\textbf{Connect it to the example.} It can show 13 shop records and a maximum of six at 50 percent before selection begins.
+
+\textbf{Where the work goes next.} It shares the file reader with \path{dataset_input} so the preview agrees with import behavior.
+
+\textbf{Names to find in the code.} \path{preview_input()} collects statistics; InputPreview.\path{row_budget()} calculates the displayed cap.
+
+\Needspace{11\baselineskip}
+
+\subsection{dataset\_input.py}
+
+\textbf{Its job:} Prepare the original data and a separate target.
+
+\textbf{What arrives.} Exactly one selected existing database or a selected CSV/folder/XLSX path.
+
+\textbf{What it does.} For file inputs it creates a newly owned imported-source schema and adds generated IDs while keeping cell values as text. For an existing database it preserves declared types and relationships. It prepares a new target, records mappings and attempts ownership-scoped cleanup on a handled preparation failure.
+
+\textbf{What leaves.} PreparedDataset containing source/target configurations, table counts, a workload path and dataset.json.
+
+\textbf{Connect it to the example.} A shop CSV does not magically become four related tables. To test our declared parent rules, use the relational schema rather than expect foreign keys to be inferred from file names.
+
+\textbf{Where the work goes next.} It hands a prepared source and target to the desktop service or menu.
+
+\textbf{Names to find in the code.} \path{prepare_dataset()} chooses the preparation route; \path{import_files()} streams supported tables into an empty source.
+
+\Needspace{11\baselineskip}
+
+\subsection{automatic\_workload.py}
+
+\textbf{Its job:} Create basic questions from discovered tables.
+
+\textbf{What arrives.} The source table description, including its keys and relationships.
+
+\textbf{What it does.} It generates structural SELECT questions: list records, count them, group a category and follow a declared relationship. Large example projections are ordered and bounded. It does not infer what matters most to a business from the table names alone.
+
+\textbf{What leaves.} A SQL string or saved automatically named .sql workload file.
+
+\textbf{Connect it to the example.} For a shop it can produce a basic order-to-customer join. A requirement such as notebook-sale coverage should still be expressed in an appropriate custom query.
+
+\textbf{Where the work goes next.} \path{dataset_input} uses it during preparation; CLI/benchmark can request an auto workload too.
+
+\textbf{Names to find in the code.} \path{generate_workload()} builds SQL; \path{save_automatic_workload()} writes it into the report area.
+
+\Needspace{11\baselineskip}
+
+\subsection{experiment\_config.py}
+
+\textbf{Its job:} Write the experiment instruction sheet.
+
+\textbf{What arrives.} Methods, budgets, seeds, workload path, quality thresholds and output folder.
+
+\textbf{What it does.} It writes these choices in YAML, a structured text settings format. Using one writer helps desktop and terminal menu runs describe their experiments consistently. Workload/output paths are resolved so later execution knows which files were intended.
+
+\textbf{What leaves.} A configuration-file path that the benchmark runner can read.
+
+\textbf{Connect it to the example.} The shop settings might say one method, budget 50, seed 42 and the five-question shop-workload.sql file.
+
+\textbf{Where the work goes next.} \path{desktop_service} and demo call it; benchmark consumes its output.
+
+\textbf{Names to find in the code.} \path{write_experiment_config()} creates the YAML instruction file.
+
+\section{Understand the source and choose records}
+
+\Needspace{11\baselineskip}
+
+\subsection{schema\_analyzer.py}
+
+\textbf{Its job:} Discover the table blueprint.
+
+\textbf{What arrives.} A connection to the source, optionally with already verified row counts.
+
+\textbf{What it does.} It asks the database which tables, columns, identifiers and foreign keys are declared. It obtains exact table counts or reuses counts from the same source view. Missing primary keys and unsupported structures are recorded; inspection failures do not become fake zero counts.
+
+\textbf{What leaves.} SchemaMetadata containing a TableMetadata description for each table.
+
+\textbf{Connect it to the example.} It discovers that Order lines has \path{line_id} as its ID and that \path{order_id} and \path{product_id} point to two parents.
+
+\textbf{Where the work goes next.} \path{dependency_graph} turns these descriptions into a dependency map; selection and copying read the same descriptions.
+
+\textbf{Names to find in the code.} \path{inspect_schema()} returns the structured source description.
+
+\Needspace{11\baselineskip}
+
+\subsection{dependency\_graph.py}
+
+\textbf{Its job:} Find everything a record needs.
+
+\textbf{What arrives.} Table/key descriptions, candidate IDs, a source connection and any already selected records.
+
+\textbf{What it does.} It builds the table dependency map and follows real foreign-key values to parent IDs. It keeps following parents until all requirements are covered. Already selected parents are treated as paid for. Nullable references can mean no parent is required; supported unique-column references are resolved to actual parent primary keys.
+
+\textbf{What leaves.} A required-record closure, added-parent information and a safe table order.
+
+\textbf{Connect it to the example.} Line 1001 requires four records. Once those are selected, Line 1002 requires only two new ones. This file supplies that relationship reasoning.
+
+\textbf{Where the work goes next.} sampler asks it for closure; \path{subset_generator} uses its parent-first order.
+
+\textbf{Names to find in the code.} \path{compute_closure()} finds required records. DependencyGraph.\path{topological_order()} gives a valid table order.
+
+\Needspace{11\baselineskip}
+
+\subsection{sql\_lexer.py}
+
+\textbf{Its job:} Recognize SQL text boundaries correctly.
+
+\textbf{What arrives.} The raw text of a workload file.
+
+\textbf{What it does.} It separates words, quoted strings, identifiers, comments and statement terminators. A semicolon inside a quoted value must not split one query into two. Unterminated text and executable comments are rejected rather than guessed at.
+
+\textbf{What leaves.} Tokens or a list of intact SQL statements for further analysis.
+
+\textbf{Connect it to the example.} A shop product name containing punctuation or an apostrophe should remain part of the intended value, not change where a question ends.
+
+\textbf{Where the work goes next.} \path{workload_analyzer} uses it to read queries and interpret features safely within the supported subset.
+
+\textbf{Names to find in the code.} tokenize() recognizes pieces of SQL; \path{split_statements()} produces the statement list.
+
+\Needspace{11\baselineskip}
+
+\subsection{workload\_analyzer.py}
+
+\textbf{Its job:} Understand which questions can be measured.
+
+\textbf{What arrives.} A workload path and optionally a source connection.
+
+\textbf{What it does.} It assigns Q numbers, finds referenced tables, joins, conditions, groups and aggregates, and records whether each SQL pattern is supported. It can stream source counts, although normal pipeline setup postpones those executions to the later comparison stage.
+
+\textbf{What leaves.} WorkloadAnalysis containing QueryInfo records and reasons for exclusions/errors.
+
+\textbf{Connect it to the example.} For the notebook question it recognizes Order lines joined to Products with a product-name filter. That helps later selection find relevant records.
+
+\textbf{Where the work goes next.} sampler reads features and usable-query status; validator executes and compares the questions.
+
+\textbf{Names to find in the code.} \path{analyze_workload()} prepares the query descriptions; \path{require_usable_workload()} rejects an unusable workload.
+
+\Needspace{11\baselineskip}
+
+\subsection{workload\_candidates.py}
+
+\textbf{Its job:} Find real rows matching a question.
+
+\textbf{What arrives.} One supported query, the schema, source connection and a row-witness limit.
+
+\textbf{What it does.} It keeps the original FROM, JOIN and WHERE conditions but projects participating primary keys. This produces a bounded set of actual matching record combinations. It does not solve every group-total or HAVING requirement optimally.
+
+\textbf{What leaves.} Small witness sets of table names and record IDs.
+
+\textbf{Connect it to the example.} For notebook-sale details, a witness can identify the matching sale line and Product 10 instead of simply preferring every product equally.
+
+\textbf{Where the work goes next.} The workload-aware sampler uses these witnesses before filling remaining space with other candidates.
+
+\textbf{Names to find in the code.} \path{query_witnesses()} finds the bounded real matches.
+
+\Needspace{11\baselineskip}
+
+\subsection{sampler.py}
+
+\textbf{Its job:} Choose which record IDs to keep.
+
+\textbf{What arrives.} Schema, dependency map, source, budget, method, seed and any usable workload.
+
+\textbf{What it does.} It dispatches one of the three methods, builds candidate samples, requests required-parent closure and accepts additions only when their new cost fits. Workload-aware selection considers query witnesses and table priorities; the two baselines use different consideration orders.
+
+\textbf{What leaves.} SelectionResult with chosen IDs, total count, added-parent count, rejections and a bounded decision log.
+
+\textbf{Connect it to the example.} It may accept the four-record requirement for Line 1001, then the two-record addition for Line 1002, and stop at six. Our particular IDs are a teaching choice, not a promised automatic selection for every setting.
+
+\textbf{Where the work goes next.} pipeline passes this result to \path{subset_generator}. Selection is a plan for copying, not a committed target.
+
+\textbf{Names to find in the code.} \path{select_rows()} is the main selector interface. Its default library budget is zero and seed is 42.
+
+\section{Copy records and decide whether to accept them}
+
+\Needspace{11\baselineskip}
+
+\subsection{pipeline.py}
+
+\textbf{Its job:} Coordinate one complete checked slice.
+
+\textbf{What arrives.} The prepared source/target connections, schema, graph, workload, cap, method, seed, baseline and quality settings.
+
+\textbf{What it does.} It verifies the source baseline, takes the target lease, invokes selection and copying, and arranges evaluation/validation before commit. It times stages and returns collected evidence when a stage fails. A callback is work scheduled to run at a specific point; here that point is just before the copied-row transaction can commit.
+
+\textbf{What leaves.} One BenchmarkRunResult containing selection, generation, checks, acceptance, timings and error state.
+
+\textbf{Connect it to the example.} A six-row shop plan must still pass value, relationship, budget and query-quality checks before this operation can be called successful.
+
+\textbf{Where the work goes next.} The desktop benchmark runner and CLI both call this coordinator.
+
+\textbf{Names to find in the code.} \path{run_pipeline()} is the best single file entry for understanding how a full run is joined together.
+
+\Needspace{11\baselineskip}
+
+\subsection{subset\_generator.py}
+
+\textbf{Its job:} Write the planned records into the target.
+
+\textbf{What arrives.} Source and target connections, table descriptions, selected keys, dependency order and a pre-commit check.
+
+\textbf{What it does.} It refuses identity/schema problems, creates needed structures and refreshes records in safe order. It copies selected rows in batches, reads those batches back to compare values, and verifies the actual target count. Generated columns are computed by the target. A failed quality callback rolls back pending row changes.
+
+\textbf{What leaves.} GenerationResult with inserted counts, success/failure and any error.
+
+\textbf{Connect it to the example.} It writes Customer 1 and the relevant products before Order 101 and Lines 1001/1002. It does not create a fake customer to replace a missing parent.
+
+\textbf{Where the work goes next.} pipeline schedules the checks that run before this function finishes its target transaction.
+
+\textbf{Names to find in the code.} \path{materialize_subset()} performs copying; the default chunk size is 500 rows.
+
+\Needspace{11\baselineskip}
+
+\subsection{schema\_compatibility.py}
+
+\textbf{Its job:} Check that table rules agree.
+
+\textbf{What arrives.} Reflected descriptions of a source table and its target counterpart.
+
+\textbf{What it does.} It compares more than names: column definitions, primary/foreign keys, unique constraints, checks and indexes. Constraint names can differ while definitions match, so comparison is based on structure. Missing or failed inspection is not silently accepted as compatibility.
+
+\textbf{What leaves.} A list of differences, empty when no compared difference is found.
+
+\textbf{Connect it to the example.} A target Orders table without its customer relationship should not be accepted merely because its two columns have familiar names.
+
+\textbf{Where the work goes next.} Copy preparation and validation use these comparisons before claiming structural fidelity.
+
+\textbf{Names to find in the code.} \path{table_schema_differences()} lists the mismatches that need attention.
+
+\Needspace{11\baselineskip}
+
+\subsection{validator.py}
+
+\textbf{Its job:} Check integrity and compare answers.
+
+\textbf{What arrives.} Source, target, the intended row cap, workload and any earlier source baseline.
+
+\textbf{What it does.} One responsibility checks tables, key uniqueness, missing parents, budget and source evidence. Another runs supported questions on both databases and compares answer rows, keys and groups. Failures, exclusions and known-empty results follow explicit counting rules rather than disappearing from the report.
+
+\textbf{What leaves.} ValidationReport and WorkloadReport with detailed per-query results.
+
+\textbf{Connect it to the example.} It confirms six copied shop rows fit a six-row cap with zero orphan references. It also computes Q3 exact retention as one of three answer rows and group coverage as two of three groups.
+
+\textbf{Where the work goes next.} pipeline applies these reports before commit; reporting and result views display them afterward.
+
+\textbf{Names to find in the code.} \path{validate_subset()} checks structure/integrity; \path{evaluate_workload()} measures query behavior.
+
+\Needspace{11\baselineskip}
+
+\subsection{result\_store.py}
+
+\textbf{Its job:} Compare answers without keeping them all in memory.
+
+\textbf{What arrives.} Batches of source and target answer tuples, including how often each occurs.
+
+\textbf{What it does.} It writes encoded typed tuples and occurrence counts into a temporary SQLite comparison table. Repeated tuples within one batch are combined efficiently, but their multiplicities remain accurate. Separate kinds represent full rows, keys and groups.
+
+\textbf{What leaves.} Exact intersection ratios used by workload evaluation; the temporary store is removed when the comparison ends.
+
+\textbf{Connect it to the example.} For Q3 it distinguishes the unchanged pair (10,1) from the changed pair (20,2) becoming (20,1). It also records that group ID 20 still exists.
+
+\textbf{Where the work goes next.} validator uses it for streamed comparisons. This SQLite store is internal machinery, not the final MySQL copy.
+
+\textbf{Names to find in the code.} ResultStore.\path{add_batch()} records comparisons; retention() calculates the retained fraction.
+
+\Needspace{11\baselineskip}
+
+\subsection{source\_snapshot.py}
+
+\textbf{Its job:} Record what the original looked like.
+
+\textbf{What arrives.} A source connection with its observed tables and values.
+
+\textbf{What it does.} It streams schema and typed record information into a compact fingerprint, alongside exact counts. Row order does not change the result simply because the database happened to scan records differently. An already verified snapshot on the same source view can be reused.
+
+\textbf{What leaves.} SourceSnapshot with fingerprint, total rows and table counts.
+
+\textbf{Connect it to the example.} Changing Asha to another name would alter content even if Customers still had three rows. The fingerprint can distinguish that endpoint change when a baseline comparison is made.
+
+\textbf{Where the work goes next.} pipeline and benchmark use it with \path{connection_scope} to make source evidence consistent.
+
+\textbf{Names to find in the code.} \path{capture_source_snapshot()} produces or reuses the snapshot for the observed view.
+
+\Needspace{11\baselineskip}
+
+\subsection{connection\_scope.py}
+
+\textbf{Its job:} Let helpers share one consistent read view.
+
+\textbf{What arrives.} A source engine or an already borrowed database connection.
+
+\textbf{What it does.} It starts or reuses the source transaction and lets multiple helpers borrow its connection. Borrowing prevents a helper from accidentally closing the transaction belonging to the whole operation. Connection execution options are restored between helpers.
+
+\textbf{What leaves.} A connection-like scope used for selection, copying and evaluation on the same observed original.
+
+\textbf{Connect it to the example.} The chosen shop IDs and source query answers should refer to the same source view even if another user is working on the server.
+
+\textbf{Where the work goes next.} pipeline, benchmark and snapshot code share this scope instead of independently opening inconsistent reads.
+
+\textbf{Names to find in the code.} \path{source_transaction()} establishes the view; ConnectionScope.connect() lends the connection.
+
+\Needspace{11\baselineskip}
+
+\subsection{acceptance.py}
+
+\textbf{Its job:} Decide whether quality is good enough.
+
+\textbf{What arrives.} A workload report and the requested survival/retention thresholds and required query IDs.
+
+\textbf{What it does.} It checks the explicit quality policy after measurements exist. It rejects failed evaluations, insufficient survival/retention and required queries that were absent, excluded, failed or lost. A positive survival requirement also needs eligible source questions.
+
+\textbf{What leaves.} AcceptanceReport with a pass/fail value and explanatory errors.
+
+\textbf{Connect it to the example.} Our shop passes a 100-percent survival threshold. It fails a 60-percent exact-retention threshold because the measured average is 56.67 percent.
+
+\textbf{Where the work goes next.} pipeline uses this decision inside the copying transaction so rejection can prevent a commit.
+
+\textbf{Names to find in the code.} AcceptancePolicy.evaluate() applies the requested rules; it does not force the selector to discover a better copy automatically.
+
+\Needspace{11\baselineskip}
+
+\subsection{target\_lock.py}
+
+\textbf{Its job:} Allow one participating writer per target.
+
+\textbf{What arrives.} The connected target identity and a wait timeout.
+
+\textbf{What it does.} It obtains a MySQL named lock, or a file lock for a file-backed SQLite target. A lock is a coordination agreement among participating workers: one works on that target while another waits or fails. A timeout prevents indefinite waiting.
+
+\textbf{What leaves.} Permission to enter the protected operation, or a busy-target error.
+
+\textbf{Connect it to the example.} Two SafeSliceSQL jobs should not simultaneously delete and refill the same \path{shop_slice} target.
+
+\textbf{Where the work goes next.} The pipeline decorator acquires this lease. It does not stop arbitrary external programs from modifying the database.
+
+\textbf{Names to find in the code.} \path{target_lease()} manages the lock; its default wait is five seconds.
+
+\section{Protect, record and present the work}
+
+\Needspace{11\baselineskip}
+
+\subsection{runtime.py}
+
+\textbf{Its job:} Check whether work should stop.
+
+\textbf{What arrives.} Configured limits, a cancellation signal and the current job context.
+
+\textbf{What it does.} It checks elapsed time, cancellation, row/file/result limits and sampled client memory. It adds read-only and timeout hooks to app-created engines. Cooperative interruption is designed to unwind through rollback and cleanup instead of pretending a stopped run succeeded.
+
+\textbf{What leaves.} Continued execution when within policy, or a specific cancelled/limited interruption.
+
+\textbf{Connect it to the example.} If a larger shop query runs too long, the operation should stop and explain which limit was reached. A high limit alone is not proof that the workload has been tested at that size.
+
+\textbf{Where the work goes next.} commands and \path{desktop_service} install it; database stages call its checkpoints.
+
+\textbf{Names to find in the code.} \path{execution_context()} sets up the guard; \path{bounded_engine()} attaches the relevant connection behavior.
+
+\Needspace{11\baselineskip}
+
+\subsection{jobs.py}
+
+\textbf{Its job:} Remember job state and proven ownership.
+
+\textbf{What arrives.} A new output folder, request choices and state/phase changes during work.
+
+\textbf{What it does.} It atomically saves local job records, tracks schemas actually created on a particular server and records pending creation intents separately. Recovery checks process identity before marking abandoned work interrupted. Retention cleanup verifies ownership, age, name pattern and server identity before deleting eligible owned schemas.
+
+\textbf{What leaves.} job.json history and explicit recovery/cleanup outcomes.
+
+\textbf{Connect it to the example.} A successful shop copy can be inspected later. A crash does not make a partially completed copy ready, and cleanup should never guess that the original shop database belongs to the app.
+
+\textbf{Where the work goes next.} The job wrapper spans preparation through outcome; history and retention commands read these records.
+
+\textbf{Names to find in the code.} journal() records the lifecycle; \path{recover_jobs()} and \path{cleanup_expired()} perform explicit management actions.
+
+\Needspace{11\baselineskip}
+
+\subsection{benchmark.py}
+
+\textbf{Its job:} Repeat comparable experiments.
+
+\textbf{What arrives.} A YAML matrix of methods, percentages and seeds plus source/target/workload settings.
+
+\textbf{What it does.} It shares one source read view, runs each combination through the common pipeline and saves every attempt. It groups results by method/budget, retains attempted and failed counts, and computes measured means/sample deviations from successful runs.
+
+\textbf{What leaves.} BenchmarkResults, combined raw CSV, grouped summaries and optional charts.
+
+\textbf{Connect it to the example.} Three methods, three percentages and two seeds produce 18 shop-style experiments. They are separate trials; their chosen records are not merged.
+
+\textbf{Where the work goes next.} \path{desktop_service} and CLI both use it. reporting exports individual runs; plots visualizes summaries.
+
+\textbf{Names to find in the code.} \path{run_benchmark()} performs the matrix; \path{load_benchmark_config()} validates its instruction file.
+
+\Needspace{11\baselineskip}
+
+\subsection{reporting.py}
+
+\textbf{Its job:} Export measured run and question details.
+
+\textbf{What arrives.} Selection, generation, validation, workload and complete run results.
+
+\textbf{What it does.} It converts those structured results into terminal tables and CSV files. Run-level facts and per-query facts are saved separately so a summary percentage can be traced back to individual measured questions and any errors.
+
+\textbf{What leaves.} Readable console output plus machine-readable run/query CSVs.
+
+\textbf{Connect it to the example.} A reader can find the shop Q4 result and see why its source count of 4 and target count of 2 produce zero exact answer retention.
+
+\textbf{Where the work goes next.} CLI and benchmark use it before summaries and user-facing reports are presented.
+
+\textbf{Names to find in the code.} \path{save_run_results_csv()} writes the CSV evidence; print\_*\_summary functions format the terminal views.
+
+\Needspace{11\baselineskip}
+
+\subsection{plots.py}
+
+\textbf{Its job:} Turn benchmark summaries into charts.
+
+\textbf{What arrives.} An existing \path{benchmark_summary.csv} and a destination folder.
+
+\textbf{What it does.} It plots the measured summary columns and handles unavailable/failed measurements without presenting missing values as fabricated successes. It can remove stale generated charts when no measured plot data is available.
+
+\textbf{What leaves.} Static chart files for method/budget comparisons.
+
+\textbf{Connect it to the example.} A chart can compare methods on answer retention, but its caption still needs the source workload, seeds and successful observation counts.
+
+\textbf{Where the work goes next.} benchmark can request plots; scripts/\path{generate_plots.py} is a standalone wrapper for an existing summary.
+
+\textbf{Names to find in the code.} \path{generate_all_plots()} reads the summary and returns the generated chart paths.
+
+\Needspace{11\baselineskip}
+
+\subsection{saved\_results.py}
+
+\textbf{Its job:} Save a compact outcome and reopen it later.
+
+\textbf{What arrives.} The copy outcome and report folder; current connection settings when reopening.
+
+\textbf{What it does.} It saves row totals, readiness and validation in a credential-free summary. For reopening, it uses current credentials and recorded ownership/server information rather than storing a reusable password. Interrupted or unavailable copies are handled explicitly.
+
+\textbf{What leaves.} \path{copy_summary.json} or a reconstructed saved-outcome object.
+
+\textbf{Connect it to the example.} A shop report may say six rows were accepted yesterday. That is the saved outcome, not a promise that nobody edited the target since then.
+
+\textbf{Where the work goes next.} History, readable report and evidence actions read this compact summary.
+
+\textbf{Names to find in the code.} \path{save_copy_summary()} writes it; \path{load_summary()} and \path{saved_outcome()} reopen recorded outcomes.
+
+\Needspace{11\baselineskip}
+
+\subsection{copy\_evidence.py}
+
+\textbf{Its job:} Inspect what is in the copy now.
+
+\textbf{What arrives.} Read-only source/target access for a selected completed outcome.
+
+\textbf{What it does.} It compares current copied records to source rows using full declared keys, checks structure and gathers parent evidence. It retains a few display examples while checking beyond those examples, so the visible samples are not the only values being verified.
+
+\textbf{What leaves.} A timestamped verification report with copied-value and relationship facts.
+
+\textbf{Connect it to the example.} It can show Line 1001 beside its original and check that its required Order 101 and Product 10 are present.
+
+\textbf{Where the work goes next.} The desktop Verify actions and report exporter use the saved evidence this operation writes.
+
+\textbf{Names to find in the code.} \path{inspect_copy()} performs the read-only inspection; \path{collect_evidence()} records it as \path{copy_verification.json}.
+
+\Needspace{11\baselineskip}
+
+\subsection{record\_browser.py}
+
+\textbf{Its job:} Search original and copied records side by side.
+
+\textbf{What arrives.} A chosen table/field, search text or full key, and read-only source/target engines.
+
+\textbf{What it does.} It performs bounded parameterized lookups and follows declared parents. Parameterized means user text is supplied as a value rather than treated as executable SQL. It supports paging and distinguishes kept, omitted, changed and missing-original states.
+
+\textbf{What leaves.} At most 25 matching rows from each side plus parent connections and paging information.
+
+\textbf{Connect it to the example.} Searching Line 1003 should show that it is outside our teaching copy, while Line 1001 can be shown as kept unchanged.
+
+\textbf{Where the work goes next.} Result windows present the returned pairs. Saved server identity is checked when it is available.
+
+\textbf{Names to find in the code.} \path{browse_records()} assembles the comparisons; \path{record_status()} gives the plain-language state.
+
+\Needspace{11\baselineskip}
+
+\subsection{result\_views.py}
+
+\textbf{Its job:} Display record evidence and charts.
+
+\textbf{What arrives.} Copy outcomes, saved summaries, chart paths and evidence/search results.
+
+\textbf{What it does.} It creates the desktop windows used to inspect records, connect a child visually to its parents, open charts and view saved results. Database work is delegated through background helpers so a large inspection does not directly freeze the interface.
+
+\textbf{What leaves.} Inspectable desktop result views and readable export actions.
+
+\textbf{Connect it to the example.} It draws the original and copied Line 1001 values and the links that let a reviewer follow its related records.
+
+\textbf{Where the work goes next.} desktop opens these views; \path{record_browser} and \path{copy_evidence} supply the facts they display.
+
+\textbf{Names to find in the code.} \path{show_evidence()}, \path{show_record_pair()} and \path{show_charts()} are examples of presentation operations here.
+
+\Needspace{11\baselineskip}
+
+\subsection{friendly\_report.py}
+
+\textbf{Its job:} Export a readable offline report.
+
+\textbf{What arrives.} A saved summary and any recorded verification evidence.
+
+\textbf{What it does.} It builds escaped HTML with tables, explanatory notes and inline charts. Escaping prevents record text from being interpreted as page markup. The report explains its recorded time, so it is clear whether the reader is seeing saved evidence.
+
+\textbf{What leaves.} A self-contained printable HTML report file.
+
+\textbf{Connect it to the example.} A saved shop report can show original/copy sizes and checked parent facts during a presentation without a live database connection. Live re-verification is a separate action.
+
+\textbf{Where the work goes next.} Result views invoke \path{export_report()}. A browser can print the saved HTML to PDF.
+
+\textbf{Names to find in the code.} \path{build_report()} creates the page content; \path{export_report()} saves it.
+
+\Needspace{11\baselineskip}
+
+\subsection{view\_tasks.py}
+
+\textbf{Its job:} Keep read-only result actions responsive.
+
+\textbf{What arrives.} A UI widget, a task, and success/failure callbacks.
+
+\textbf{What it does.} It runs the task in a worker thread under a runtime context, places the result in a queue and polls from the UI thread. A queue passes messages safely between the worker and the window. Closing the widget requests cancellation.
+
+\textbf{What leaves.} A callback with the result or a sanitized failure, invoked from the appropriate UI side.
+
+\textbf{Connect it to the example.} Searching a larger shop copy can continue while the window stays responsive and can handle cancellation.
+
+\textbf{Where the work goes next.} Verification/search result views use it rather than updating Tk widgets directly from a worker.
+
+\textbf{Names to find in the code.} background() establishes the worker, queue and polling lifecycle.
+
+\Needspace{11\baselineskip}
+
+\subsection{user\_errors.py}
+
+\textbf{Its job:} Explain a failure in terms the user can act on.
+
+\textbf{What arrives.} A sanitized message or recognized database error code.
+
+\textbf{What it does.} It maps common problems to guidance: server unavailable, rejected login, missing privilege, unavailable file/schema or a reached limit. The error dialog can offer retry or connection settings. Technical details remain available without revealing bound values or passwords.
+
+\textbf{What leaves.} A plain-language title, advice and appropriate UI actions.
+
+\textbf{Connect it to the example.} A failed shop connection should lead the user to check that MySQL is running, not merely show an unexplained traceback.
+
+\textbf{Where the work goes next.} Desktop and result actions use it when displaying errors from other modules.
+
+\textbf{Names to find in the code.} \path{explain_error()} chooses the explanation; \path{show_error()} displays the dialog.
+
+\section{Test the system and define its result forms}
+
+\Needspace{11\baselineskip}
+
+\subsection{synthetic.py}
+
+\textbf{Its job:} Create varied test databases deliberately.
+
+\textbf{What arrives.} A row scale, seed, case count, chosen backend and a new output location.
+
+\textbf{What it does.} It generates several graph shapes, repeated categories, nullable parents, self-references and composite primary keys. The suite tries all three methods at 10/100 percent, repeats selections and checks exact full-budget results. Disposable MySQL schemas are owned and cleaned up by the test operation.
+
+\textbf{What leaves.} Case databases/manifests/workloads and check records with success/failure details.
+
+\textbf{Connect it to the example.} Our small shop is a teaching example. These generated cases broaden testing beyond one familiar schema and reveal different dependency patterns.
+
+\textbf{Where the work goes next.} selftest and \path{scale_check} use this generator and suite.
+
+\textbf{Names to find in the code.} \path{generate_database()} builds a case; \path{run_synthetic_suite()} exercises methods and writes results.
+
+\Needspace{11\baselineskip}
+
+\subsection{scale\_check.py}
+
+\textbf{Its job:} Measure generated tests at increasing sizes.
+
+\textbf{What arrives.} Requested row levels, seeds, case count and a backend choice.
+
+\textbf{What it does.} It repeats the synthetic suite and measures elapsed time, client CPU time, sampled peak client memory and retained artifact sizes. It records actual source totals per case, and preserves completed measurements if a later sample is stopped.
+
+\textbf{What leaves.} evidence.json with running/completed/failed/stopped state and scale measurements.
+
+\textbf{Connect it to the example.} A 10,000-row generation bound is per table; the evidence may show a case with 40,463 total rows. The actual measured total is what belongs on a review slide.
+
+\textbf{Where the work goes next.} The scalecheck CLI command invokes it. It labels results synthetic and \path{production_certification}=False.
+
+\textbf{Names to find in the code.} \path{run_scale_check()} records the measured sweep.
+
+\Needspace{11\baselineskip}
+
+\subsection{types.py}
+
+\textbf{Its job:} Define the forms passed between stages.
+
+\textbf{What arrives.} This file mostly defines data structures rather than receiving a user request.
+
+\textbf{What it does.} It names the fields that a schema, selection, copy result, query result and benchmark result must contain. Shared structures let one stage hand information to another consistently. A validation property combines the structural check outcomes while keeping unverified source history distinct from a detected change.
+
+\textbf{What leaves.} Reusable structured result types used throughout the application.
+
+\textbf{Connect it to the example.} The shop selection result holds six chosen IDs; its validation report holds \path{actual_rows}=6, \path{budget_limit}=6 and \path{fk_violations}=0. A query result separately holds Q4 counts and retention.
+
+\textbf{Where the work goes next.} The sampler, copier, evaluator, pipeline and exporters all exchange these forms.
+
+\textbf{Names to find in the code.} SelectionResult, ValidationReport, QueryResult and BenchmarkRunResult are important structures; ValidationReport.\path{is_valid} combines checks.

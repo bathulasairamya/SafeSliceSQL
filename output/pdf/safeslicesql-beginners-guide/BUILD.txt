@@ -1,0 +1,13 @@
+Understanding SafeSliceSQL: beginner edition
+
+Upload the complete ZIP, select main.tex and use XeLaTeX (recommended).
+The preamble also supports pdfLaTeX via Type 1 fonts.
+Keep file-walkthrough.tex, supporting-map.tex, glossary.tex and assets/ together.
+
+Local compile: tectonic main.tex
+
+The shop-example and shop-workload SQL files use fictional data.
+The selected six-row teaching copy is recorded in worked-example-results.json.
+It is an executed illustration, not a selector performance benchmark.
+
+The earlier 91-page guide is retained separately as a technical companion.

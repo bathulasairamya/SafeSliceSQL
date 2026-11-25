@@ -1,0 +1,25 @@
+SafeSliceSQL project workflow and review guide
+
+Main source: main.tex (also supplied as safeslicesql-project-guide.tex)
+Recommended compiler: XeLaTeX. Tectonic works too.
+The preamble also supports pdfLaTeX using Type 1 editions of the same fonts,
+and LuaLaTeX using OpenType fonts.
+Keep all .tex files and the assets/ directory together.
+
+Overleaf:
+1. Upload the complete source ZIP as a new project.
+2. Select main.tex as the main document.
+3. In project settings, choose XeLaTeX as the compiler (recommended).
+4. Recompile. If the previous fatal fontspec error persists, recompile from scratch.
+Do not upload only the main file: the appendix files and assets are required.
+
+Local command:
+tectonic main.tex
+
+For a local pdfLaTeX installation, run twice:
+pdflatex main.tex
+pdflatex main.tex
+
+The editable source contains a 10-chapter explanation, measured evidence, file atlas, complete function reference and coverage manifest. JSON snapshots preserve source hashes and reported evidence. Historical results are labelled; compilation does not refresh experiments.
+
+No private .env file, live database password or raw production records are included.

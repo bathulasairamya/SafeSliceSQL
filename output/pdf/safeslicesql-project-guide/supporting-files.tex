@@ -1,0 +1,437 @@
+\chapter{Supporting files, tests and generated folders}
+
+\section{Every supporting tracked file}
+
+\Needspace{5\baselineskip}
+
+\subsection*{README.md}
+
+User-facing Windows setup, launch commands, scope, downloads above 5,000 rows and per-dataset workload/manual validity queries.
+
+\Needspace{5\baselineskip}
+
+\subsection*{pyproject.toml}
+
+Package version 0.1.0; Python >=3.10; dependencies/extras; safeslice console entry point; pytest markers; Ruff rules.
+
+\Needspace{5\baselineskip}
+
+\subsection*{requirements.txt}
+
+Editable installation of the project with dev, excel and security extras; dependency definitions live in pyproject.toml.
+
+\Needspace{5\baselineskip}
+
+\subsection*{requirements-demo-windows-py310.txt}
+
+Pinned Python 3.10 Windows demonstration environment plus editable project installation.
+
+\Needspace{5\baselineskip}
+
+\subsection*{.env.example}
+
+Public configuration template for separate roles, logging, credential references and cooperative resource limits. Values are examples, not deployed privileges.
+
+\Needspace{5\baselineskip}
+
+\subsection*{.gitignore}
+
+Excludes environments, private environment files, caches, logs, results and local database files.
+
+\Needspace{5\baselineskip}
+
+\subsection*{demo.bat}
+
+Sets the working directory/PYTHONPATH and launches .venv/Scripts/pythonw.exe -m safeslicesql.desktop after checking the virtual environment.
+
+\Needspace{5\baselineskip}
+
+\subsection*{Terminal Demo.bat}
+
+Runs the numbered terminal demonstration using the project environment.
+
+\Needspace{5\baselineskip}
+
+\subsection*{.github/workflows/ci.yml}
+
+Windows Python 3.10 check, Ubuntu Python 3.10/3.11/3.12 matrix, and a disposable MySQL 8.0 service for integration tests/scale evidence artifacts.
+
+\Needspace{5\baselineskip}
+
+\subsection*{docs/technical.md}
+
+Algorithm definitions, supported SQL/schema scope, metric formulas, correctness and timing boundaries.
+
+\Needspace{5\baselineskip}
+
+\subsection*{docs/operations.md}
+
+CLI usage, acceptance, resource limits, transaction boundaries, job ownership, least privilege and retention.
+
+\Needspace{5\baselineskip}
+
+\subsection*{datasets/README.md}
+
+Local download inventory and structural checks. Download existence is distinguished from end-to-end application compatibility.
+
+\Needspace{5\baselineskip}
+
+\subsection*{datasets/manifest.json}
+
+Download URLs, recorded timestamp, CSV dimensions, byte lengths, SHA-256 digests and archive CRC results; local hashes are not publisher authenticity signatures.
+
+\Needspace{5\baselineskip}
+
+\subsection*{datasets/.gitignore}
+
+Keeps downloaded CSV/SQL/archive payloads out of Git.
+
+\Needspace{5\baselineskip}
+
+\subsection*{examples/demo-orders.csv}
+
+Fictional bundled 20-row single-table demonstration; 25 percent permits 5 rows. It is intentionally smaller than the larger testing shortlist.
+
+\Needspace{5\baselineskip}
+
+\subsection*{benchmarks/benchmarks.yaml}
+
+SQLite employee-demo matrix: 3 methods x budgets 10/20/40 x seeds 42/123/999 = 27 experiments.
+
+\Needspace{5\baselineskip}
+
+\subsection*{benchmarks/benchmarks\_world.yaml}
+
+Environment-configured MySQL World matrix: 3 methods x budgets 10/20/30 x seeds 42/123 = 18 experiments.
+
+\Needspace{5\baselineskip}
+
+\subsection*{scripts/seed\_sqlite\_db.py}
+
+Creates local Employees-like SQLite data and an empty target. This is synthetic/local sample data, not the full Employees download.
+
+\Needspace{5\baselineskip}
+
+\subsection*{scripts/generate\_plots.py}
+
+Standalone wrapper around the application plot generator for an existing benchmark summary.
+
+\Needspace{5\baselineskip}
+
+\subsection*{scripts/create\_1pct\_targets.sql}
+
+Creates dedicated named Employees targets for three 1-percent method comparisons; review and run manually.
+
+\Needspace{5\baselineskip}
+
+\subsection*{scripts/least\_privilege\_mysql.sql}
+
+Administrator-reviewed reader/writer grant example for source versus app-owned schema prefixes; never executed automatically.
+
+\Needspace{5\baselineskip}
+
+\subsection*{workloads/workload.sql}
+
+Eight Employees queries covering filters, joins, grouping, HAVING and an intentionally empty query.
+
+\Needspace{5\baselineskip}
+
+\subsection*{workloads/world\_workload.sql}
+
+Six World queries covering countries, large cities, languages, continent groups and joins.
+
+\Needspace{5\baselineskip}
+
+\subsection*{workloads/testing\_world.sql}
+
+Three reviewer-oriented World queries; source city keys, official-language parents and continent coverage.
+
+\Needspace{5\baselineskip}
+
+\subsection*{workloads/testing\_chinook.sql}
+
+Three Chinook queries for invoice/customer/track chains, PlaylistTrack composite keys and genre groups.
+
+\Needspace{5\baselineskip}
+
+\subsection*{workloads/testing\_employees.sql}
+
+Three Employees queries for bounded current salaries, current department assignments and department coverage.
+
+\Needspace{5\baselineskip}
+
+\subsection*{workloads/testing\_diamonds.sql}
+
+Two text-safe single-file CSV queries using data\_1\_diamonds and synthetic row identifiers.
+
+\Needspace{5\baselineskip}
+
+\subsection*{workloads/testing\_taxis.sql}
+
+Two text-safe single-file CSV queries using data\_1\_taxis and synthetic row identifiers.
+
+\Needspace{5\baselineskip}
+
+\subsection*{tests/conftest.py}
+
+Shared pytest fixtures for configuration and optional live source engine access.
+
+\Needspace{5\baselineskip}
+
+\subsection*{tests/\_\_init\_\_.py}
+
+Marks the test package; does not implement application behavior.
+
+\section{Every automated test module}
+
+These are behavioral checks, not additional application entry points. The fresh non-database run selects tests by the db marker, so database-marked tests are not evidence of a fresh MySQL run.
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_benchmark.py}
+
+\plain{Benchmark YAML validation, end-to-end experiment export and standalone plots.}
+
+\technical{5 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_db_pair}, \path{test_load_benchmark_config}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_cli.py}
+
+\plain{Help text, invalid methods/budgets and missing benchmark files.}
+
+\technical{5 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_cli_help}, \path{test_cli_run_invalid_method}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_config\_db.py}
+
+\plain{Separate source/target credentials, project-relative environment, URL escaping and safe errors.}
+
+\technical{8 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_load_config_reads_source_and_target_credentials}, \path{test_default_env_file_is_project_root_relative}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_copy\_and\_parser\_regressions.py}
+
+\plain{Self-reference ordering, generated columns, invalid selections, missing rows, rollback and literal/comment parsing.}
+
+\technical{18 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_self_references_insert_parents_and_delete_children_first}, \path{test_self_reference_to_unique_column_with_composite_pk}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_copy\_evidence.py}
+
+\plain{Current row equality, related records, composite keys and changes beyond sampled display rows.}
+
+\technical{5 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_evidence_checks_records_and_exposes_related_record}, \path{test_empty_relationship_is_explicit_and_missing_table_fails}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_dataset\_input.py}
+
+\plain{CSV headers/dialects, text preservation, malformed rows, Excel formulas and automatic workloads on unfamiliar schemas.}
+
+\technical{10 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_auto_queries_execute_on_unfamiliar_schema}, \path{test_csv_preserves_strings_and_duplicate_headers}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_demo.py}
+
+\plain{Menu controls, default input, subprocess argument safety and forwarding to the real pipeline.}
+
+\technical{13 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_menu_starts_and_exits_without_database_access}, \path{test_inspection_uses_selected_source}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_dependencies.py}
+
+\plain{Graph orientation, cycles, closure propagation, nullable and self-referential dependencies.}
+
+\technical{14 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_graph_construction}, \path{test_topological_sort_order}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_desktop.py}
+
+\plain{Request validation, real service integration, ready/failed display and worker/close behavior.}
+
+\technical{6 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_invalid_request_never_prepares_data}, \path{test_desktop_request_runs_real_pipeline_and_comparison}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_input\_picker.py}
+
+\plain{Native dialogs, cancellation, system-schema filtering and engine cleanup.}
+
+\technical{4 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_native_picker_returns_selected_path_and_closes_hidden_window}, \path{test_cancelled_native_dialog_returns_no_path}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_input\_preview.py}
+
+\plain{Preview/import agreement, limits, malformed inputs and percentage rounding.}
+
+\technical{4 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_file_preview_matches_import_without_database_access}, \path{test_preview_enforces_row_limits_and_rejects_malformed_input}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_metrics\_regressions.py}
+
+\plain{Typed/multiset results, grouping lineage, source history, honest errors/empty-result denominators and successful-only summaries.}
+
+\technical{20 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_unaliased_join_and_unqualified_group_features}, \path{test_quoted_alias_features_ignore_literal_contents}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_mysql\_safety.py}
+
+\plain{Real MySQL read-only source, limits, rollback, ownership, identity, engine/schema constraints and parser/result semantics.}
+
+\technical{23 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_mysql_pipeline_acceptance_rolls_back_and_preserves_json}, \path{test_mysql_readonly_source_and_statement_deadline}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_performance\_regressions.py}
+
+\plain{Zero-budget I/O, dependency-free fast paths, cached totals, seeded priority buckets and duplicate-batch writes.}
+
+\technical{5 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_zero_budget_never_reads_database}, \path{test_independent_candidate_skips_dependency_traversal}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_pipeline.py}
+
+\plain{Shared stage order, preflight timing, failed materialization and preservation of validation evidence.}
+
+\technical{4 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_shared_runner_preserves_stage_order_and_validates_copy}, \path{test_failed_materialization_never_evaluates_stale_target}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_production\_controls.py}
+
+\plain{Acceptance thresholds, rollback, time/memory/disk controls, credential storage, owned cleanup and scale evidence.}
+
+\technical{21 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_quality_gate_rejects_lost_or_unknown_required_queries}, \path{test_quality_gate_accepts_explicit_requirements}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_remaining\_regressions.py}
+
+\plain{CLI failure propagation, deterministic reservoir sampling, malformed matrices, source-only dry runs and bounded streaming.}
+
+\technical{16 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_benchmark_cli_propagates_failures}, \path{test_seeded_reservoir_ignores_unordered_scan_direction}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_reporting.py}
+
+\plain{Run/per-query CSV output and Rich console summaries.}
+
+\technical{2 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_save_run_results_csv}, \path{test_console_summary_printers}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_review\_fixes.py}
+
+\plain{Acceptance rollback, triggers/index compatibility, query witnesses, declared-key lineage and comparison timing.}
+
+\technical{14 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_rejected_acceptance_keeps_previous_target}, \path{test_target_trigger_is_rejected_before_rows_change}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_safety\_regressions.py}
+
+\plain{Same-database identity attacks, schema drift, orphan detection, missing-check failures and unique-column FK resolution.}
+
+\technical{18 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_rejected_workload_never_executes}, \path{test_real_source_identity_cannot_be_hidden_by_label}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_sampler.py}
+
+\plain{Budgeted reproducible selectors, dependency closure, composite PKs and unsupported composite FKs.}
+
+\technical{5 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_baseline_select_rows_is_budgeted_and_reproducible}, \path{test_random_repair_uses_dependency_closure}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_schema.py}
+
+\plain{Reflected columns, keys, exact counts and optional live MySQL schema inspection.}
+
+\technical{5 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_inspect_simple_schema}, \path{test_composite_primary_key_is_supported}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_smoke.py}
+
+\plain{Configuration, imports, CLI and optional live source connectivity.}
+
+\technical{26 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_config_loads_without_error}, \path{test_source_target_differ}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_subset\_generator.py}
+
+\plain{Exact table reproduction, selected-row copy, refresh order and transactional failure cases.}
+
+\technical{10 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_materialize_respects_parent_before_child}, \path{test_pk_values_preserved_exactly}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_synthetic.py}
+
+\plain{Generated graph shapes, deterministic data, all methods/full budgets and owned-schema cleanup.}
+
+\technical{7 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_generator_is_reproducible_and_has_valid_references}, \path{test_suite_exercises_all_shapes_methods_and_full_copy}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_user\_experience.py}
+
+\plain{Record search, safe literals/paging, composite keys, saved reports and actionable errors.}
+
+\technical{6 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_search_original_and_copy_and_parent_before_after}, \path{test_search_literal_wildcards_sql_injection_and_paging}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_validator.py}
+
+\plain{Structural checks, orphan/duplicate detection and retention calculations.}
+
+\technical{5 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_validate_subset_detects_valid_subset}, \path{test_evaluate_workload_returns_retention_metrics}.}
+
+\Needspace{6\baselineskip}
+
+\subsection*{tests/test\_workload.py}
+
+\plain{Statement loading, feature extraction and reproducible workload-aware selection.}
+
+\technical{3 test function definitions; parametrization can produce more collected test cases. Representative checks: \path{test_load_workload_parses_queries}, \path{test_analyze_workload_extracts_query_features}.}
+
+\section{Folders that are outputs or local infrastructure}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.285\linewidth}>{\raggedright\arraybackslash}p{0.635\linewidth}}
+\toprule
+\textbf{Location} & \textbf{Meaning / review treatment} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Location} & \textbf{Meaning / review treatment} \\
+\midrule
+\endhead
+src/safeslicesql/ & Canonical application source. Read these files rather than stale packaging copies. \\[4pt]
+build/lib/safeslicesql/ & Generated packaging copies; 28 Python files were present. They do not override current src/ logic and may lag it. \\[4pt]
+results/ & Saved raw/per-query CSVs, summaries, plots, demo outcomes, self-test and scale records. Inspect provenance before citing a number. \\[4pt]
+logs/ & Rotating diagnostics, potentially containing schema names and workload context. Not included verbatim in this public guide. \\[4pt]
+data/ & Ignored local SQLite source/target files used by example benchmarks. \\[4pt]
+datasets/csv/, datasets/mysql/, datasets/archives/ & Ignored third-party payloads and original archives. The upstream license remains applicable. \\[4pt]
+.venv/ & Local installed runtime and tooling. Dependency files define installation; this folder is not product source. \\[4pt]
+.git/ & Version history and index; current baseline commit is recorded in the guide. \\[4pt]
+.pytest\_cache/, .ruff\_cache/, .coverage & Generated developer caches/coverage state. They are not evidence that the current tree passes. \\[4pt]
+.env & Private live settings; contents intentionally excluded. Only the public template was inspected for defaults. \\[4pt]
+output/pdf/safeslicesql-project-guide/ & This guide, source, generated appendices, figures and sanitized evidence snapshot. \\[4pt]
+tmp/pdfs/project-guide/ & Document-build scripts, fresh verification output, compiler smoke test and visual-QA images. \\[4pt]
+\bottomrule
+\end{longtable}

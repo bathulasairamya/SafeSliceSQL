@@ -1,0 +1,54 @@
+\chapter{Glossary and where to go next}
+
+\begin{longtable}{>{\RaggedRight\arraybackslash}p{0.32\linewidth}>{\RaggedRight\arraybackslash}p{0.58\linewidth}}
+\toprule
+\textbf{Term} & \textbf{Read it as} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Term} & \textbf{Read it as} \\
+\midrule
+\endhead
+Source & The original input database being read. \\[5pt]
+Target & The separate database that receives the selected smaller copy. \\[5pt]
+Table / row / column & A collection of one kind of record / one record / one kind of value in each record. \\[5pt]
+Primary key & The declared identifier column or identifier tuple that uniquely identifies a row. \\[5pt]
+Foreign key & A declared reference requiring a child value to match a parent record. \\[5pt]
+Parent / child & The referenced record / the record that depends on it. \\[5pt]
+Schema & The blueprint of tables, columns, keys, types and rules. \\[5pt]
+Constraint / index & A database-enforced rule / a structure that helps database lookups. \\[5pt]
+Workload & The chosen list of read-only questions used to assess the copy. \\[5pt]
+Closure & A chosen record set plus every parent record it needs recursively. \\[5pt]
+Incremental cost & How many additional records must be added after already-selected records are counted. \\[5pt]
+Budget & The maximum total rows allowed in the output, including parents. \\[5pt]
+Seed & The starting value used to repeat pseudo-random choices. \\[5pt]
+Witness & Actual matching record identifiers used to support a query condition/join. \\[5pt]
+Heuristic & A practical selection rule that does not prove universal optimality. \\[5pt]
+Validation & Checks that structure, identifiers, references, values and row limits meet their rules. \\[5pt]
+Acceptance & The explicit decision whether measured query quality is sufficient. \\[5pt]
+Transaction / commit / rollback & A group of related pending changes / saving them / cancelling them. \\[5pt]
+Survival & An eligible question returns a nonempty result on both original and copy. \\[5pt]
+Exact retention & The fraction of original typed answer-row occurrences that still match. \\[5pt]
+Group coverage & How many original identifiable groups still appear, irrespective of changed numeric totals. \\[5pt]
+Fingerprint & A compact check value derived from observed schema/content, used with a baseline. \\[5pt]
+Journal & A durable local record of a job, its progress, outcome and created-schema ownership. \\[5pt]
+Benchmark & A planned comparison of repeated experiments with stated input/settings. \\[5pt]
+API / function signature & A callable interface / its named inputs, defaults and declared return annotation. \\[5pt]
+\bottomrule
+\end{longtable}
+
+\section{When you are ready for technical detail}
+
+Use the separate Complete Workflow and Project Review Guide as the technical companion. It contains exact function signatures, class fields, resource-limit keys, source hashes and the full tracked-file manifest. Return to this beginner walkthrough whenever a definition needs a record-level example.
+
+\section{Reproduce the teaching example}
+
+The source bundle includes assets/shop-example.sql and assets/shop-workload.sql, plus worked-example-results.json. The setup file creates four tables and inserts 13 fictional rows; use it only in a fresh empty database. The JSON records the deliberately chosen six-row copy and measured outcomes. Those keys demonstrate one valid selection, rather than claim to benchmark an automatic method.
+
+\section{Compile this document}
+
+Upload the complete beginner source ZIP and select main.tex. XeLaTeX is recommended; the preamble also chooses a compatible Type 1 font setup for pdfLaTeX. Keep the included .tex files and assets folder together. Recompiling changes typesetting, not the date or meaning of saved application measurements.
+
+\section{One final check of your understanding}
+
+You understand the central workflow if you can explain why Line 1001 needs four records, why Line 1002 adds only two, why COUNT survives with a changed answer, and which files choose, copy and check the records.

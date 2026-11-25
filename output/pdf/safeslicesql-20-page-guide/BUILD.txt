@@ -1,0 +1,11 @@
+SafeSliceSQL: exactly 20 pages
+
+Upload this complete ZIP to Overleaf, select main.tex and compile.
+XeLaTeX is recommended. The preamble also has a pdfLaTeX-compatible Type 1 font setup.
+Keep the assets folder alongside main.tex.
+Local command: tectonic main.tex
+
+The opening overview and final review checklist are included in the 20-page total.
+The file map covers all 45 application modules without the long function-signature appendix.
+The fictional shop setup and questions are provided in assets; the checked, deliberately chosen copy is recorded in worked-example-results.json.
+Historical measurements are labelled within the guide.

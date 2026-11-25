@@ -1,0 +1,77 @@
+{
+  "pages": 91,
+  "source_modules": 45,
+  "tracked_files": 103,
+  "function_entries": 255,
+  "all_source_hashes_match": true,
+  "no_out_of_bounds_words": true,
+  "no_missing_glyphs": true,
+  "no_blank_pages": true,
+  "no_overfull_boxes": true,
+  "section_starts": [
+    {
+      "page": 6,
+      "heading": "The project in one clear picture"
+    },
+    {
+      "page": 8,
+      "heading": "A job from the first click to the final output"
+    },
+    {
+      "page": 11,
+      "heading": "Inputs, datasets, databases and SQL workloads"
+    },
+    {
+      "page": 14,
+      "heading": "How row selection works"
+    },
+    {
+      "page": 17,
+      "heading": "Parameters and function contracts"
+    },
+    {
+      "page": 21,
+      "heading": "Metrics: formulas, meanings and edge cases"
+    },
+    {
+      "page": 24,
+      "heading": "Measured evidence: fresh checks and saved results"
+    },
+    {
+      "page": 27,
+      "heading": "Safety, recovery and operational boundaries"
+    },
+    {
+      "page": 29,
+      "heading": "Runbook: demonstrate and verify the whole project"
+    },
+    {
+      "page": 31,
+      "heading": "What to highlight in a project review"
+    },
+    {
+      "page": 33,
+      "heading": "Application files: plain language and technical atlas"
+    },
+    {
+      "page": 46,
+      "heading": "Supporting files, tests and generated folders"
+    },
+    {
+      "page": 55,
+      "heading": "Function and data-contract reference"
+    },
+    {
+      "page": 87,
+      "heading": "Review coverage and provenance"
+    }
+  ],
+  "compiler_configuration": {
+    "recommended": "XeLaTeX",
+    "font_setup": "iftex selects Type 1 fonts for pdfLaTeX; fontspec only for XeTeX/LuaTeX",
+    "locally_verified_engine": "Tectonic (XeTeX)",
+    "native_pdfLaTeX_run": false,
+    "main_document": "main.tex"
+  },
+  "pdf_sha256": "da9252d9997ac3264b77da971a165f8564fbb405207017601299bdad3c2929c7"
+}

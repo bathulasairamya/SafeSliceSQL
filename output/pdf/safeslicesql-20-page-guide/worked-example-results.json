@@ -1,0 +1,292 @@
+{
+  "purpose": "Fictional teaching example with deliberately chosen row keys; not a selector performance benchmark.",
+  "backend": "sqlite",
+  "source_rows": 13,
+  "budget_percent": 50,
+  "budget_limit": 6,
+  "actual_rows": 6,
+  "physical_row_retention": 0.46153846153846156,
+  "first_line_closure_rows": 4,
+  "second_line_new_rows": 2,
+  "generation": {
+    "target_database": "teaching_target",
+    "tables_created": [
+      "customers",
+      "products",
+      "orders",
+      "order_lines"
+    ],
+    "rows_inserted": {
+      "customers": 1,
+      "products": 2,
+      "orders": 1,
+      "order_lines": 2
+    },
+    "total_rows_inserted": 6,
+    "insertion_order": [
+      "customers",
+      "products",
+      "orders",
+      "order_lines"
+    ],
+    "success": true,
+    "error_message": "",
+    "pending_validation": false
+  },
+  "validation": {
+    "pk_unique": true,
+    "fk_violations": 0,
+    "fk_violation_details": [],
+    "budget_compliant": true,
+    "actual_rows": 6,
+    "budget_limit": 6,
+    "tables_present": [
+      "customers",
+      "order_lines",
+      "orders",
+      "products"
+    ],
+    "tables_missing": [],
+    "source_unchanged": true,
+    "schema_compatible": true,
+    "errors": []
+  },
+  "acceptance": {
+    "passed": true,
+    "errors": []
+  },
+  "workload": {
+    "per_query_results": [
+      {
+        "query_id": "Q1",
+        "query_text": "SELECT l.line_id, p.product_name, l.quantity\nFROM order_lines l JOIN products p ON l.product_id = p.product_id\nWHERE p.product_name = 'Notebook'",
+        "source_row_count": 1,
+        "target_row_count": 1,
+        "source_empty": false,
+        "source_result_known": true,
+        "target_empty": false,
+        "survived": true,
+        "key_retention": 1.0,
+        "result_row_retention": 1.0,
+        "aggregate_retention": 1.0,
+        "execution_time_source": 0.0001967000134754926,
+        "execution_time_target": 0.0001753999968059361,
+        "comparison_time_source": 0.000665100000333041,
+        "comparison_time_target": 7.840001489967108e-05,
+        "error": "",
+        "excluded": false,
+        "exclusion_reason": ""
+      },
+      {
+        "query_id": "Q2",
+        "query_text": "SELECT line_id, order_id, product_id, quantity FROM order_lines",
+        "source_row_count": 4,
+        "target_row_count": 2,
+        "source_empty": false,
+        "source_result_known": true,
+        "target_empty": false,
+        "survived": true,
+        "key_retention": 0.5,
+        "result_row_retention": 0.5,
+        "aggregate_retention": 0.5,
+        "execution_time_source": 0.00027009996119886637,
+        "execution_time_target": 0.00023040000814944506,
+        "comparison_time_source": 0.0006046000053174794,
+        "comparison_time_target": 9.519999730400741e-05,
+        "error": "",
+        "excluded": false,
+        "exclusion_reason": ""
+      },
+      {
+        "query_id": "Q3",
+        "query_text": "SELECT p.product_id, COUNT(*) AS line_count\nFROM products p JOIN order_lines l ON p.product_id = l.product_id\nGROUP BY p.product_id",
+        "source_row_count": 3,
+        "target_row_count": 2,
+        "source_empty": false,
+        "source_result_known": true,
+        "target_empty": false,
+        "survived": true,
+        "key_retention": 0.6666666666666666,
+        "result_row_retention": 0.3333333333333333,
+        "aggregate_retention": 0.6666666666666666,
+        "execution_time_source": 0.00028419995214790106,
+        "execution_time_target": 0.0002992999798152596,
+        "comparison_time_source": 0.0005844999977853149,
+        "comparison_time_target": 0.00010139998630620539,
+        "error": "",
+        "excluded": false,
+        "exclusion_reason": ""
+      },
+      {
+        "query_id": "Q4",
+        "query_text": "SELECT COUNT(*) AS total_lines FROM order_lines",
+        "source_row_count": 1,
+        "target_row_count": 1,
+        "source_empty": false,
+        "source_result_known": true,
+        "target_empty": false,
+        "survived": true,
+        "key_retention": 0.0,
+        "result_row_retention": 0.0,
+        "aggregate_retention": 0.0,
+        "execution_time_source": 0.000321299972711131,
+        "execution_time_target": 0.00033909999183379114,
+        "comparison_time_source": 0.0009439999994356185,
+        "comparison_time_target": 5.9699988923966885e-05,
+        "error": "",
+        "excluded": false,
+        "exclusion_reason": ""
+      },
+      {
+        "query_id": "Q5",
+        "query_text": "SELECT customer_id, customer_name FROM customers WHERE customer_id = 999",
+        "source_row_count": 0,
+        "target_row_count": 0,
+        "source_empty": true,
+        "source_result_known": true,
+        "target_empty": true,
+        "survived": false,
+        "key_retention": 1.0,
+        "result_row_retention": 1.0,
+        "aggregate_retention": 1.0,
+        "execution_time_source": 5.220001912675798e-05,
+        "execution_time_target": 5.8399979025125504e-05,
+        "comparison_time_source": 0.0,
+        "comparison_time_target": 0.0,
+        "error": "",
+        "excluded": false,
+        "exclusion_reason": ""
+      }
+    ],
+    "total_queries": 5,
+    "supported_queries": 5,
+    "excluded_queries": 0,
+    "source_nonempty_queries": 4,
+    "failed_queries": 0,
+    "source_unknown_queries": 0,
+    "survival_denominator": 4,
+    "query_survival_rate": 1.0,
+    "overall_key_retention": 0.6333333333333333,
+    "overall_result_retention": 0.5666666666666667,
+    "overall_aggregate_retention": 0.6333333333333333
+  },
+  "tables": {
+    "customers": {
+      "original": [
+        [
+          1,
+          "Asha"
+        ],
+        [
+          2,
+          "Bharat"
+        ],
+        [
+          3,
+          "Charu"
+        ]
+      ],
+      "copy": [
+        [
+          1,
+          "Asha"
+        ]
+      ]
+    },
+    "order_lines": {
+      "original": [
+        [
+          1001,
+          101,
+          10,
+          2
+        ],
+        [
+          1002,
+          101,
+          20,
+          5
+        ],
+        [
+          1003,
+          102,
+          30,
+          1
+        ],
+        [
+          1004,
+          103,
+          20,
+          10
+        ]
+      ],
+      "copy": [
+        [
+          1001,
+          101,
+          10,
+          2
+        ],
+        [
+          1002,
+          101,
+          20,
+          5
+        ]
+      ]
+    },
+    "orders": {
+      "original": [
+        [
+          101,
+          1
+        ],
+        [
+          102,
+          1
+        ],
+        [
+          103,
+          2
+        ]
+      ],
+      "copy": [
+        [
+          101,
+          1
+        ]
+      ]
+    },
+    "products": {
+      "original": [
+        [
+          10,
+          "Notebook",
+          50
+        ],
+        [
+          20,
+          "Pen",
+          10
+        ],
+        [
+          30,
+          "Bag",
+          500
+        ]
+      ],
+      "copy": [
+        [
+          10,
+          "Notebook",
+          50
+        ],
+        [
+          20,
+          "Pen",
+          10
+        ]
+      ]
+    }
+  }
+}
